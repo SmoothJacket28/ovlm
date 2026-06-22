@@ -71,6 +71,26 @@ export interface BallMeasurement {
   pitchVelocityMph: number | null;
   /** Measured carry distance in metres from OPS243 FMCW, null if unavailable */
   carryDistanceM: number | null;
+
+  // ── Pitch movement (requires pre-contact pitch-trajectory tracking —
+  // null until that pipeline exists; not derivable from `trajectory`,
+  // which only covers the post-contact batted-ball flight) ─────────────
+  /** Vertical deviation vs. a zero-spin pitch, inches. Positive = ride, negative = sink. */
+  verticalBreakIn: number | null;
+  /** Horizontal deviation vs. a zero-spin pitch, inches. */
+  horizontalBreakIn: number | null;
+  /** Extra vertical break from seam-shifted wake (non-Magnus), inches. */
+  sswBreakVIn: number | null;
+  /** Extra horizontal break from seam-shifted wake (non-Magnus), inches. */
+  sswBreakHIn: number | null;
+  /** Release height off the ground, feet. */
+  releaseHeightFt: number | null;
+  /** Release point's horizontal offset from the rubber's center, feet. */
+  releaseSideFt: number | null;
+  /** Distance down the mound at release relative to the rubber, feet. */
+  extensionFt: number | null;
+  /** Where the pitch crosses the front of the plate. */
+  plateLocation: { xFt: number; yFt: number } | null;
 }
 
 /** Result of the Kalman trajectory filter */

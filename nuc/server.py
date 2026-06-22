@@ -41,16 +41,18 @@ class PipelineServer:
         self._disarm_cb = None
         self._reset_cb  = None
         self._threshold_cb    = None
+        self._mode_cb         = None
         self._calib_start_cb  = None   # (height_mm, dist_mm)
         self._calib_capture_cb = None
         self._calib_stop_cb   = None
 
-    def set_callbacks(self, arm=None, disarm=None, reset=None, set_threshold=None,
+    def set_callbacks(self, arm=None, disarm=None, reset=None, set_threshold=None, set_mode=None,
                       calib_start=None, calib_capture=None, calib_stop=None) -> None:
         self._arm_cb           = arm
         self._disarm_cb        = disarm
         self._reset_cb         = reset
         self._threshold_cb     = set_threshold
+        self._mode_cb          = set_mode
         self._calib_start_cb   = calib_start
         self._calib_capture_cb = calib_capture
         self._calib_stop_cb    = calib_stop
@@ -73,6 +75,11 @@ class PipelineServer:
                     try:
                         self._threshold_cb(float(msg["value"]))
                     except (KeyError, ValueError):
+                        pass
+                elif t == "set_mode" and self._mode_cb:
+                    try:
+                        self._mode_cb(str(msg["mode"]))
+                    except KeyError:
                         pass
                 elif t == "calib_start" and self._calib_start_cb:
                     try:

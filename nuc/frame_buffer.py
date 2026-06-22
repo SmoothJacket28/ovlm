@@ -14,7 +14,7 @@ from typing import Callable, List, Optional
 import config
 from capture import FramePair, SpinFrame
 
-FlushCallback = Callable[[List[FramePair], float], None]
+FlushCallback = Callable[[List[FramePair], float, str], None]
 
 
 class FrameBuffer:
@@ -23,6 +23,7 @@ class FrameBuffer:
         self._ring: deque = deque()
         self._lock = threading.Lock()
         self._trigger_time: Optional[float] = None
+        self._trigger_kind: str = "hit"
 
     def push(self, pair: FramePair) -> None:
         now = time.monotonic()
@@ -37,12 +38,17 @@ class FrameBuffer:
                 if elapsed >= config.HALF_WINDOW_S:
                     self._flush_locked()
 
-    def trigger(self, trigger_time: float) -> None:
+    def trigger(self, trigger_time: float, kind: str = "hit") -> None:
+        """kind: 'hit' (bat-crack / outbound EV) or 'pitch' (inbound radar) —
+        forwarded to the flush callback so the pipeline knows which physics
+        model applies to this frame window."""
         with self._lock:
             self._trigger_time = trigger_time
+            self._trigger_kind = kind
 
     def _flush_locked(self) -> None:
         t = self._trigger_time
+        kind = self._trigger_kind
         assert t is not None
         start = t - config.HALF_WINDOW_S
         end   = t + config.HALF_WINDOW_S
@@ -54,7 +60,7 @@ class FrameBuffer:
             # Hand off without holding the lock
             threading.Thread(
                 target=self._on_flush,
-                args=(window, t),
+                args=(window, t, kind),
                 daemon=True,
             ).start()
 

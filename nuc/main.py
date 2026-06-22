@@ -77,14 +77,29 @@ def main() -> None:
     capturer = StereoCapturer(on_pair=buffer.push)
 
     armed = False
+    current_mode = "hitting"   # 'pitching' | 'hitting' | 'live' — set by the browser via set_mode
+
+    def mic_active() -> bool:
+        return current_mode in ("hitting", "live")
+
+    def pitch_trigger_active() -> bool:
+        return current_mode in ("pitching", "live")
+
+    def set_mode(mode: str) -> None:
+        nonlocal current_mode
+        if mode not in ("pitching", "hitting", "live"):
+            return
+        current_mode = mode
+        log.info("Session mode -> %s", mode)
 
     def arm():
         nonlocal armed
         armed = True
-        if not args.no_audio:
+        if not args.no_audio and mic_active():
             audio.arm()
-        server.broadcast({"type": "status", "state": "armed", "audioArmed": not args.no_audio})
-        log.info("Armed")
+        server.broadcast({"type": "status", "state": "armed",
+                          "audioArmed": not args.no_audio and mic_active()})
+        log.info("Armed (mode=%s)", current_mode)
 
     def disarm():
         nonlocal armed
@@ -103,8 +118,11 @@ def main() -> None:
 
     if not args.no_audio:
         audio = AudioTrigger(on_trigger=lambda t: buffer.trigger(t) if armed else None)
-        audio.start()
-        log.info("Audio trigger started")
+        try:
+            audio.start()
+            log.info("Audio trigger started")
+        except Exception as exc:
+            log.warning("Audio trigger not available (%s) — continuing without it", exc)
     else:
         audio = None
 
@@ -116,6 +134,16 @@ def main() -> None:
                 log.info("Radar trigger at %.1f mph", abs(pt.vel) * 2.23694)
                 buffer.trigger(time.monotonic())
         radar.set_trigger_callback(_radar_trigger)
+
+    # OPS243 pitch trigger: fires on inbound (pitch-release) detections, the
+    # same buffer.trigger() path as audio — used for Pitching/Live sessions,
+    # which have no bat-crack for the mic to listen for.
+    if ops243 is not None:
+        def _ops243_pitch_trigger(pitch_mph: float, _range_m: float | None) -> None:
+            if armed and pitch_trigger_active():
+                log.info("Radar pitch trigger at %.1f mph", pitch_mph)
+                buffer.trigger(time.monotonic(), kind="pitch")
+        ops243.set_pitch_trigger_callback(_ops243_pitch_trigger)
 
     def set_threshold(value: float) -> None:
         if audio is not None:
@@ -152,12 +180,15 @@ def main() -> None:
             _calib_session = None
         log.info("Calibration session stopped")
 
-    server.set_callbacks(arm=arm, disarm=disarm, reset=reset, set_threshold=set_threshold,
+    server.set_callbacks(arm=arm, disarm=disarm, reset=reset, set_threshold=set_threshold, set_mode=set_mode,
                          calib_start=calib_start, calib_capture=calib_capture,
                          calib_stop=calib_stop)
 
     log.info("Starting stereo capture …")
-    capturer.start()
+    try:
+        capturer.start()
+    except Exception as exc:
+        log.warning("Stereo cameras not available (%s) — continuing without live capture", exc)
 
     if spin_cap is not None:
         if spin_cap.start():

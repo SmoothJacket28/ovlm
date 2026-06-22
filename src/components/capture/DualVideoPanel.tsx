@@ -1,14 +1,27 @@
 import React, { useState, useCallback } from 'react';
-import { useStore, usePipelineStatus, useWsHost } from '@/state/store';
+import { useStore, usePipelineStatus, useWsHost, useSessionMode } from '@/state/store';
 import { piClient } from '@/ws/client';
 import type { BallMeasurement } from '@/types/tracking';
 import type { AudioLevel } from '@/state/session.slice';
+import type { SessionMode, LiveDelivery, LiveScenario } from '@/state/sessionMode.slice';
+
+const MODE_META: Record<SessionMode, { label: string; icon: string; hint: string }> = {
+  pitching: { label: 'PITCHING', icon: '🎯', hint: 'Trigger: radar release detect. Tracks pitch velocity, spin, and movement.' },
+  hitting:  { label: 'HITTING',  icon: '🏏', hint: 'Trigger: mic bat-crack. Tracks exit velocity, launch angle, and spray.' },
+  live:     { label: 'LIVE',     icon: '⚡', hint: 'Trigger: mic + radar. Tracks both pitch and batted-ball metrics.' },
+};
 
 export function DualVideoPanel(): React.ReactElement {
   const status    = usePipelineStatus();
   const wsHost    = useWsHost();
   const setWsHost = useStore((s) => s.setWsHost);
   const swings    = useStore((s) => s.swings);
+
+  const sessionMode  = useSessionMode();
+  const liveDelivery = useStore((s) => s.liveDelivery);
+  const liveScenario = useStore((s) => s.liveScenario);
+  const startSession  = useStore((s) => s.startSession);
+  const endSession    = useStore((s) => s.endSession);
 
   const audioLevel = useStore((s) => s.audioLevel);
   const [hostDraft, setHostDraft] = useState(wsHost);
@@ -26,6 +39,21 @@ export function DualVideoPanel(): React.ReactElement {
   const arm    = () => piClient.send({ type: 'arm' });
   const disarm = () => piClient.send({ type: 'disarm' });
   const reset  = () => piClient.send({ type: 'reset' });
+
+  const handleStartSession = (mode: SessionMode, opts?: { liveDelivery: LiveDelivery; liveScenario: LiveScenario }) => {
+    startSession(mode, opts);
+    piClient.send({ type: 'set_mode', mode });
+  };
+
+  const handleEndSession = () => {
+    piClient.send({ type: 'disarm' });
+    endSession();
+  };
+
+  const triggerTitle = sessionMode === 'pitching' ? 'RADAR TRIGGER'
+    : sessionMode === 'live' ? 'MIC + RADAR TRIGGER'
+    : 'MIC TRIGGER';
+  const showAudioMeter = sessionMode !== 'pitching';
 
   const connected = status.wsConnected;
   const armed     = status.audioArmed;
@@ -68,71 +96,95 @@ export function DualVideoPanel(): React.ReactElement {
         )}
       </div>
 
-      {/* ── Trigger controls ────────────────────────────────────── */}
-      <div style={styles.card}>
-        <div style={styles.cardTitle}>MIC TRIGGER</div>
-        <div style={styles.triggerRow}>
-          <button
-            style={{ ...styles.btnPrimary, opacity: !connected || armed ? 0.4 : 1 }}
-            disabled={!connected || armed}
-            onClick={arm}
-          >
-            🎙 ARM
-          </button>
-          <button
-            style={{ ...styles.btnDanger, opacity: !connected || !armed ? 0.4 : 1 }}
-            disabled={!connected || !armed}
-            onClick={disarm}
-          >
-            ⬛ DISARM
-          </button>
-          <button
-            style={{ ...styles.btnSecondary, opacity: !connected ? 0.4 : 1 }}
-            disabled={!connected}
-            onClick={reset}
-          >
-            ↺ RESET
-          </button>
-        </div>
-
-        <div style={styles.armedIndicator}>
-          <div style={{
-            ...styles.dot,
-            background: armed ? '#ff4455' : '#223',
-            boxShadow: armed ? '0 0 8px #ff4455' : 'none',
-            width: 10, height: 10,
-            transition: 'all 0.2s',
-          }} />
-          <span style={{ fontSize: 11, color: armed ? '#ff4455' : '#445', letterSpacing: '0.12em' }}>
-            {armed ? 'ARMED — WAITING FOR SWING' : 'NOT ARMED'}
-          </span>
-        </div>
-      </div>
-
-      {/* ── Audio level meter ───────────────────────────────────── */}
-      {audioLevel && connected && (
-        <AudioLevelCard level={audioLevel} />
-      )}
-
-      {/* ── Pipeline state ───────────────────────────────────────── */}
-      <div style={styles.card}>
-        <div style={styles.cardTitle}>PIPELINE</div>
-        <PipelineStates state={status.state} latencyMs={status.latencyMs} />
-      </div>
-
-      {/* ── Last measurement ─────────────────────────────────────── */}
-      {lastBall && (
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>LAST SWING</div>
-          <div style={styles.metricsRow}>
-            <Metric label="EXIT VEL"  value={`${lastBall.exitVelocity}`}                        unit="mph" color="#ff6644" />
-            <Metric label="LAUNCH ∠"  value={`${lastBall.launchAngle}`}                         unit="°"   color="#44aaff" />
-            <Metric label="SPRAY ∠"   value={`${lastBall.sprayAngle}`}                          unit="°"   color="#44ff88" />
-            <Metric label="DETECT"    value={`${(lastBall.detectRate * 100).toFixed(0)}`}       unit="%"
-              color={lastBall.detectRate >= 0.7 ? '#44ff88' : lastBall.detectRate >= 0.4 ? '#ffaa00' : '#ff4455'} />
-            <Metric label="LATENCY"   value={`${lastBall.processingLatencyMs.toFixed(0)}`}      unit="ms"  color="#aaaacc" />
+      {/* ── Session mode: pick one to unlock capture, or show the active one ── */}
+      {sessionMode === null ? (
+        <SessionStartCard onStart={handleStartSession} />
+      ) : (
+        <>
+          <div style={styles.card}>
+            <div style={styles.sessionBadgeRow}>
+              <div>
+                <div style={styles.cardTitle}>ACTIVE SESSION</div>
+                <div style={styles.sessionModeValue}>
+                  {MODE_META[sessionMode].icon} {MODE_META[sessionMode].label}
+                  {sessionMode === 'live' && (
+                    <span style={styles.sessionSubBadge}>
+                      {liveDelivery === 'machine' ? 'MACHINE' : 'LIVE ARM'} · {liveScenario === 'bullpen' ? 'BULLPEN' : 'GAME'}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button style={styles.btnSecondary} onClick={handleEndSession}>END SESSION</button>
+            </div>
           </div>
-        </div>
+
+          {/* ── Trigger controls ────────────────────────────────────── */}
+          <div style={styles.card}>
+            <div style={styles.cardTitle}>{triggerTitle}</div>
+            <div style={styles.triggerRow}>
+              <button
+                style={{ ...styles.btnPrimary, opacity: !connected || armed ? 0.4 : 1 }}
+                disabled={!connected || armed}
+                onClick={arm}
+              >
+                🎙 ARM
+              </button>
+              <button
+                style={{ ...styles.btnDanger, opacity: !connected || !armed ? 0.4 : 1 }}
+                disabled={!connected || !armed}
+                onClick={disarm}
+              >
+                ⬛ DISARM
+              </button>
+              <button
+                style={{ ...styles.btnSecondary, opacity: !connected ? 0.4 : 1 }}
+                disabled={!connected}
+                onClick={reset}
+              >
+                ↺ RESET
+              </button>
+            </div>
+
+            <div style={styles.armedIndicator}>
+              <div style={{
+                ...styles.dot,
+                background: armed ? '#ff4455' : '#223',
+                boxShadow: armed ? '0 0 8px #ff4455' : 'none',
+                width: 10, height: 10,
+                transition: 'all 0.2s',
+              }} />
+              <span style={{ fontSize: 11, color: armed ? '#ff4455' : '#445', letterSpacing: '0.12em' }}>
+                {armed ? 'ARMED — WAITING FOR SWING' : 'NOT ARMED'}
+              </span>
+            </div>
+          </div>
+
+          {/* ── Audio level meter ───────────────────────────────────── */}
+          {showAudioMeter && audioLevel && connected && (
+            <AudioLevelCard level={audioLevel} />
+          )}
+
+          {/* ── Pipeline state ───────────────────────────────────────── */}
+          <div style={styles.card}>
+            <div style={styles.cardTitle}>PIPELINE</div>
+            <PipelineStates state={status.state} latencyMs={status.latencyMs} />
+          </div>
+
+          {/* ── Last measurement ─────────────────────────────────────── */}
+          {lastBall && (
+            <div style={styles.card}>
+              <div style={styles.cardTitle}>LAST SWING</div>
+              <div style={styles.metricsRow}>
+                <Metric label="EXIT VEL"  value={`${lastBall.exitVelocity}`}                        unit="mph" color="#ff6644" />
+                <Metric label="LAUNCH ∠"  value={`${lastBall.launchAngle}`}                         unit="°"   color="#44aaff" />
+                <Metric label="SPRAY ∠"   value={`${lastBall.sprayAngle}`}                          unit="°"   color="#44ff88" />
+                <Metric label="DETECT"    value={`${(lastBall.detectRate * 100).toFixed(0)}`}       unit="%"
+                  color={lastBall.detectRate >= 0.7 ? '#44ff88' : lastBall.detectRate >= 0.4 ? '#ffaa00' : '#ff4455'} />
+                <Metric label="LATENCY"   value={`${lastBall.processingLatencyMs.toFixed(0)}`}      unit="ms"  color="#aaaacc" />
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Setup guide (shown when disconnected) ────────────────── */}
@@ -144,10 +196,91 @@ export function DualVideoPanel(): React.ReactElement {
             <li>Enter the monitor's WebSocket URL above (default ws://localhost:8765)</li>
             <li>Click CONNECT — the status dot will turn green</li>
             <li>If not yet calibrated, run <code style={styles.code}>python plate_calib.py --live</code> (see the Calibrate tab)</li>
-            <li>Click ARM, then swing</li>
+            <li>Pick a session mode below and click START SESSION</li>
+            <li>Click ARM, then go</li>
           </ol>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Session start picker ─────────────────────────────────────────────────────
+// Choosing a mode here is what starts a session: it tells the backend which
+// trigger source(s) to arm and the Metrics dashboard which fields to show.
+
+function SessionStartCard({ onStart }: {
+  onStart: (mode: SessionMode, opts?: { liveDelivery: LiveDelivery; liveScenario: LiveScenario }) => void;
+}) {
+  const [mode, setMode] = useState<SessionMode>('hitting');
+  const [delivery, setDelivery] = useState<LiveDelivery>('live-arm');
+  const [scenario, setScenario] = useState<LiveScenario>('game');
+
+  return (
+    <div style={styles.card}>
+      <div style={styles.cardTitle}>START SESSION</div>
+
+      <div style={styles.modeRow}>
+        {(Object.keys(MODE_META) as SessionMode[]).map((m) => (
+          <button
+            key={m}
+            style={{ ...styles.modeBtn, ...(mode === m ? styles.modeBtnActive : {}) }}
+            onClick={() => setMode(m)}
+          >
+            <span style={{ fontSize: 16 }}>{MODE_META[m].icon}</span>
+            {MODE_META[m].label}
+          </button>
+        ))}
+      </div>
+      <div style={styles.modeHint}>{MODE_META[mode].hint}</div>
+
+      {mode === 'live' && (
+        <div style={styles.liveSubRow}>
+          <div style={styles.subGroup}>
+            <div style={styles.subGroupLabel}>DELIVERY</div>
+            <SubToggle
+              options={[{ value: 'live-arm', label: 'LIVE ARM' }, { value: 'machine', label: 'MACHINE' }]}
+              value={delivery}
+              onChange={(v) => setDelivery(v as LiveDelivery)}
+            />
+          </div>
+          <div style={styles.subGroup}>
+            <div style={styles.subGroupLabel}>SCENARIO</div>
+            <SubToggle
+              options={[{ value: 'game', label: 'GAME' }, { value: 'bullpen', label: 'BULLPEN' }]}
+              value={scenario}
+              onChange={(v) => setScenario(v as LiveScenario)}
+            />
+          </div>
+        </div>
+      )}
+
+      <button
+        style={{ ...styles.btnPrimary, marginTop: 4, alignSelf: 'flex-start' }}
+        onClick={() => onStart(mode, mode === 'live' ? { liveDelivery: delivery, liveScenario: scenario } : undefined)}
+      >
+        ▶ START SESSION
+      </button>
+    </div>
+  );
+}
+
+function SubToggle({ options, value, onChange }: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div style={styles.subToggle}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          style={{ ...styles.subToggleBtn, ...(opt.value === value ? styles.subToggleBtnActive : {}) }}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -397,6 +530,98 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     display: 'inline-block',
     flexShrink: 0,
+  },
+  sessionBadgeRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sessionModeValue: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: '#aabbdd',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  sessionSubBadge: {
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: '#667788',
+    border: '1px solid #1a1a2e',
+    borderRadius: 4,
+    padding: '2px 6px',
+  },
+  modeRow: {
+    display: 'flex',
+    gap: 8,
+  },
+  modeBtn: {
+    flex: 1,
+    padding: '10px 8px',
+    background: '#07070f',
+    border: '1px solid #1a1a2e',
+    borderRadius: 6,
+    color: '#667788',
+    cursor: 'pointer',
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    fontFamily: 'inherit',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 4,
+  },
+  modeBtnActive: {
+    background: '#131326',
+    color: '#4488ff',
+    border: '1px solid #1a3a6e',
+  },
+  modeHint: {
+    fontSize: 9,
+    color: '#445',
+    lineHeight: 1.4,
+  },
+  liveSubRow: {
+    display: 'flex',
+    gap: 16,
+    paddingTop: 4,
+  },
+  subGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  subGroupLabel: {
+    fontSize: 8,
+    color: '#445',
+    letterSpacing: '0.1em',
+  },
+  subToggle: {
+    display: 'flex',
+    border: '1px solid #1a1a2e',
+    borderRadius: 4,
+    overflow: 'hidden',
+    width: 'fit-content',
+  },
+  subToggleBtn: {
+    padding: '4px 10px',
+    background: 'transparent',
+    border: 'none',
+    borderRight: '1px solid #1a1a2e',
+    color: '#445',
+    cursor: 'pointer',
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    fontFamily: 'inherit',
+  },
+  subToggleBtnActive: {
+    background: '#131326',
+    color: '#4488ff',
   },
   errorMsg: {
     fontSize: 10,

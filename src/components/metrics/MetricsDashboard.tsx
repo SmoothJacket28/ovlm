@@ -1,35 +1,58 @@
 import React from 'react';
-import { useStore, useSwings, useActiveSwing } from '@/state/store';
+import { useStore, useSwings, useActiveSwing, useSessionMode } from '@/state/store';
 import type { SwingSession } from '@/types/pipeline';
-import { BiomechPanel } from './BiomechPanel';
+import type { BallMeasurement } from '@/types/tracking';
+import type { LiveMetricsView, SessionMode } from '@/state/sessionMode.slice';
 import { EVChart } from './EVChart';
 import { SprayChart } from './SprayChart';
+import { StrikeZoneChart } from './StrikeZoneChart';
+import {
+  trueSpinRateRpm, gyroDegree, spinClockLabel, calculatedDistanceFt, apexHeightFt,
+} from '@/modules/metrics/derived';
 import {
   openSimulator, sendSwingToSimulator, getAutoSend, setAutoSend,
 } from '@/integrations/simulator';
 
 function exportCsv(swings: SwingSession[]): void {
   const header = [
-    'swing', 'timestamp', 'exit_velocity_mph', 'launch_angle_deg',
-    'spray_angle_deg', 'spin_rate_rpm', 'spin_efficiency_pct',
-    'spin_axis_x', 'spin_axis_y', 'spin_axis_z',
+    'swing', 'timestamp', 'exit_velocity_mph', 'launch_angle_deg', 'spray_angle_deg',
+    'calculated_distance_ft', 'apex_height_ft', 'pitch_velocity_mph',
+    'total_spin_rpm', 'true_spin_rpm', 'spin_efficiency_pct', 'gyro_degree', 'spin_axis_clock',
+    'vertical_break_in', 'horizontal_break_in', 'ssw_break_v_in', 'ssw_break_h_in',
+    'release_height_ft', 'release_side_ft', 'extension_ft',
+    'plate_loc_x_ft', 'plate_loc_y_ft',
     'detect_rate_pct', 'latency_ms',
   ].join(',');
 
-  const rows = [...swings].reverse().map((sw, i) => [
-    i + 1,
-    new Date(sw.timestamp).toISOString(),
-    sw.ball.exitVelocity,
-    sw.ball.launchAngle,
-    sw.ball.sprayAngle,
-    sw.ball.seam?.spinRate ?? '',
-    sw.ball.seam != null ? (sw.ball.seam.spinEfficiency * 100).toFixed(1) : '',
-    sw.ball.seam?.spinAxis[0].toFixed(3) ?? '',
-    sw.ball.seam?.spinAxis[1].toFixed(3) ?? '',
-    sw.ball.seam?.spinAxis[2].toFixed(3) ?? '',
-    (sw.ball.detectRate * 100).toFixed(1),
-    sw.ball.processingLatencyMs.toFixed(0),
-  ].join(','));
+  const rows = [...swings].reverse().map((sw, i) => {
+    const b = sw.ball;
+    return [
+      i + 1,
+      new Date(sw.timestamp).toISOString(),
+      b.exitVelocity,
+      b.launchAngle,
+      b.sprayAngle,
+      calculatedDistanceFt(b).toFixed(1),
+      apexHeightFt(b)?.toFixed(1) ?? '',
+      b.pitchVelocityMph ?? '',
+      b.seam?.spinRate ?? '',
+      b.seam ? trueSpinRateRpm(b.seam).toFixed(0) : '',
+      b.seam != null ? (b.seam.spinEfficiency * 100).toFixed(1) : '',
+      b.seam ? gyroDegree(b.seam).toFixed(1) : '',
+      b.seam ? spinClockLabel(b.seam.spinAxis) : '',
+      b.verticalBreakIn ?? '',
+      b.horizontalBreakIn ?? '',
+      b.sswBreakVIn ?? '',
+      b.sswBreakHIn ?? '',
+      b.releaseHeightFt ?? '',
+      b.releaseSideFt ?? '',
+      b.extensionFt ?? '',
+      b.plateLocation?.xFt ?? '',
+      b.plateLocation?.yFt ?? '',
+      (b.detectRate * 100).toFixed(1),
+      b.processingLatencyMs.toFixed(0),
+    ].join(',');
+  });
 
   const csv  = [header, ...rows].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -41,10 +64,186 @@ function exportCsv(swings: SwingSession[]): void {
   URL.revokeObjectURL(url);
 }
 
+// ── Mode-driven metric set ──────────────────────────────────────────────────────
+// Which metric cards appear depends on the active session mode: Pitching cares
+// about the inbound radar reading + movement profile, Hitting about the batted
+// ball, Live tracks both (filterable via the ALL/PITCHING/HITTING toggle).
+
+type MetricKey =
+  | 'exitVelocity' | 'launchAngle' | 'sprayAngle' | 'calculatedDistance' | 'apexHeight'
+  | 'spinRate' | 'trueSpinRate' | 'spinEfficiency' | 'gyroDegree' | 'spinAxis'
+  | 'verticalBreak' | 'horizontalBreak' | 'sswBreakV' | 'sswBreakH'
+  | 'releaseHeight' | 'releaseSide' | 'extension'
+  | 'pitchVelocity' | 'detectRate' | 'latency';
+
+const METRIC_META: Record<MetricKey, { label: string; unit: string }> = {
+  exitVelocity:       { label: 'EXIT VELOCITY',     unit: 'mph' },
+  launchAngle:        { label: 'LAUNCH ANGLE',      unit: '°' },
+  sprayAngle:         { label: 'DIRECTION',         unit: '°' },
+  calculatedDistance: { label: 'CALCULATED DIST.',  unit: 'ft' },
+  apexHeight:         { label: 'APEX HEIGHT',       unit: 'ft' },
+  spinRate:           { label: 'TOTAL SPIN RATE',   unit: 'rpm' },
+  trueSpinRate:       { label: 'TRUE SPIN RATE',    unit: 'rpm' },
+  spinEfficiency:     { label: 'SPIN EFFICIENCY',   unit: '%' },
+  gyroDegree:         { label: 'GYRO DEGREE',       unit: '°' },
+  spinAxis:           { label: 'SPIN DIRECTION',    unit: 'clock' },
+  verticalBreak:      { label: 'VERTICAL BREAK',    unit: 'in' },
+  horizontalBreak:    { label: 'HORIZONTAL BREAK',  unit: 'in' },
+  sswBreakV:          { label: 'SSW BREAK (V)',     unit: 'in' },
+  sswBreakH:          { label: 'SSW BREAK (H)',     unit: 'in' },
+  releaseHeight:      { label: 'RELEASE HEIGHT',    unit: 'ft' },
+  releaseSide:        { label: 'RELEASE SIDE',      unit: 'ft' },
+  extension:          { label: 'EXTENSION',         unit: 'ft' },
+  pitchVelocity:      { label: 'PITCH VELOCITY',    unit: 'mph' },
+  detectRate:         { label: 'DETECT RATE',       unit: '%' },
+  latency:            { label: 'LATENCY',           unit: 'ms' },
+};
+
+const PITCHING_METRICS: MetricKey[] = [
+  'pitchVelocity', 'spinRate', 'trueSpinRate', 'spinEfficiency', 'gyroDegree', 'spinAxis',
+  'verticalBreak', 'horizontalBreak', 'sswBreakV', 'sswBreakH',
+  'releaseHeight', 'releaseSide', 'extension',
+];
+const HITTING_METRICS: MetricKey[] = [
+  'exitVelocity', 'launchAngle', 'sprayAngle', 'calculatedDistance', 'apexHeight',
+  'spinRate', 'spinAxis', 'pitchVelocity',
+];
+const SHARED_METRICS: MetricKey[] = ['detectRate', 'latency'];
+
+function metricsForMode(mode: SessionMode | null, liveView: LiveMetricsView): MetricKey[] {
+  switch (mode) {
+    case 'pitching': return [...PITCHING_METRICS, ...SHARED_METRICS];
+    case 'hitting':  return [...HITTING_METRICS, ...SHARED_METRICS];
+    case 'live':
+      if (liveView === 'pitching') return [...PITCHING_METRICS, ...SHARED_METRICS];
+      if (liveView === 'hitting')  return [...HITTING_METRICS, ...SHARED_METRICS];
+      return [...PITCHING_METRICS, ...HITTING_METRICS, ...SHARED_METRICS];
+    default: return [...HITTING_METRICS, ...SHARED_METRICS];
+  }
+}
+
+const MODE_LABELS: Record<SessionMode, string> = {
+  pitching: 'PITCHING', hitting: 'HITTING', live: 'LIVE',
+};
+
 const MPH_TO_KPH = 1.60934;
 
 function fmtEv(ev: number, unit: 'mph' | 'kph'): string {
   return unit === 'kph' ? (ev * MPH_TO_KPH).toFixed(1) : String(ev);
+}
+
+/** One metric card for `key`. `ball` is null in the pre-session preview, where every card shows a dash. */
+function renderMetricCard(
+  key: MetricKey,
+  ball: BallMeasurement | null,
+  evUnit: 'mph' | 'kph',
+  laRange: [number, number],
+): React.ReactElement {
+  const meta = METRIC_META[key];
+  if (!ball) {
+    return <MetricCard key={key} label={meta.label} unit={meta.unit} value="—" color="#334" />;
+  }
+  switch (key) {
+    case 'exitVelocity':
+      return <MetricCard key={key} label={meta.label} value={fmtEv(ball.exitVelocity, evUnit)} unit={evUnit}
+        color="#ff6644" note={evNote(ball.exitVelocity)}
+        badge={ball.evSource === 'radar' ? 'RADAR' : undefined} badgeColor="#44aaff" />;
+    case 'launchAngle':
+      return <MetricCard key={key} label={meta.label} value={`${ball.launchAngle}`} unit="°"
+        color="#44aaff" note={laNote(ball.launchAngle, laRange[0], laRange[1])} />;
+    case 'sprayAngle':
+      return <MetricCard key={key} label={meta.label} value={`${ball.sprayAngle}`} unit="°"
+        color="#44ff88" note={saNote(ball.sprayAngle)} />;
+    case 'calculatedDistance':
+      return <MetricCard key={key} label={meta.label} value={`${Math.round(calculatedDistanceFt(ball))}`} unit="ft"
+        color="#66ddaa" badge={ball.carryDistanceM != null ? 'RADAR' : 'EST.'} badgeColor="#44aaff" />;
+    case 'apexHeight': {
+      const apex = apexHeightFt(ball);
+      return apex != null
+        ? <MetricCard key={key} label={meta.label} value={apex.toFixed(1)} unit="ft" color="#66aaff" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="ft" color="#334" />;
+    }
+    case 'spinRate':
+      return ball.seam
+        ? <MetricCard key={key} label={meta.label} value={ball.seam.spinRate.toLocaleString()} unit="rpm" color="#aa88ff" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="rpm" color="#334" />;
+    case 'trueSpinRate':
+      return ball.seam
+        ? <MetricCard key={key} label={meta.label} value={Math.round(trueSpinRateRpm(ball.seam)).toLocaleString()} unit="rpm" color="#cc88ff" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="rpm" color="#334" />;
+    case 'gyroDegree':
+      return ball.seam
+        ? <MetricCard key={key} label={meta.label} value={gyroDegree(ball.seam).toFixed(0)} unit="°" color="#ffaa88" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="°" color="#334" />;
+    case 'spinAxis':
+      return ball.seam
+        ? <MetricCard key={key} label={meta.label} value={spinClockLabel(ball.seam.spinAxis)} unit="" color="#88aaff" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="clock" color="#334" />;
+    case 'spinEfficiency':
+      return ball.seam
+        ? <MetricCard key={key} label={meta.label} value={`${(ball.seam.spinEfficiency * 100).toFixed(0)}`} unit="%" color="#ffaa44" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="%" color="#334" />;
+    case 'verticalBreak':
+      return ball.verticalBreakIn != null
+        ? <MetricCard key={key} label={meta.label} value={ball.verticalBreakIn.toFixed(1)} unit="in" color="#44ccaa" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="in" color="#334" />;
+    case 'horizontalBreak':
+      return ball.horizontalBreakIn != null
+        ? <MetricCard key={key} label={meta.label} value={ball.horizontalBreakIn.toFixed(1)} unit="in" color="#44ccaa" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="in" color="#334" />;
+    case 'sswBreakV':
+      return ball.sswBreakVIn != null
+        ? <MetricCard key={key} label={meta.label} value={ball.sswBreakVIn.toFixed(1)} unit="in" color="#66bbcc" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="in" color="#334" />;
+    case 'sswBreakH':
+      return ball.sswBreakHIn != null
+        ? <MetricCard key={key} label={meta.label} value={ball.sswBreakHIn.toFixed(1)} unit="in" color="#66bbcc" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="in" color="#334" />;
+    case 'releaseHeight':
+      return ball.releaseHeightFt != null
+        ? <MetricCard key={key} label={meta.label} value={ball.releaseHeightFt.toFixed(1)} unit="ft" color="#aabb66" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="ft" color="#334" />;
+    case 'releaseSide':
+      return ball.releaseSideFt != null
+        ? <MetricCard key={key} label={meta.label} value={ball.releaseSideFt.toFixed(1)} unit="ft" color="#aabb66" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="ft" color="#334" />;
+    case 'extension':
+      return ball.extensionFt != null
+        ? <MetricCard key={key} label={meta.label} value={ball.extensionFt.toFixed(1)} unit="ft" color="#aabb66" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="ft" color="#334" />;
+    case 'pitchVelocity':
+      return ball.pitchVelocityMph != null
+        ? <MetricCard key={key} label={meta.label} value={`${ball.pitchVelocityMph}`} unit="mph" color="#44ddff" />
+        : <MetricCard key={key} label={meta.label} value="—" unit="mph" color="#334" />;
+    case 'detectRate':
+      return <MetricCard key={key} label={meta.label} value={`${(ball.detectRate * 100).toFixed(0)}`} unit="%"
+        color={ball.detectRate >= 0.7 ? '#44ff88' : ball.detectRate >= 0.4 ? '#ffaa00' : '#ff4455'}
+        note={ball.detectRate < 0.4 ? 'Low — check exposure' : undefined} />;
+    case 'latency':
+      return <MetricCard key={key} label={meta.label} value={`${ball.processingLatencyMs.toFixed(0)}`} unit="ms"
+        color={ball.processingLatencyMs > 400 ? '#ff4455' : '#44ff88'} />;
+  }
+}
+
+function LiveViewToggle({ value, onChange }: { value: LiveMetricsView; onChange: (v: LiveMetricsView) => void }) {
+  const options: { value: LiveMetricsView; label: string }[] = [
+    { value: 'all', label: 'ALL' },
+    { value: 'pitching', label: 'PITCHING' },
+    { value: 'hitting', label: 'HITTING' },
+  ];
+  return (
+    <div style={styles.liveToggle}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          style={{ ...styles.liveToggleBtn, ...(opt.value === value ? styles.liveToggleBtnActive : {}) }}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function MetricsDashboard(): React.ReactElement {
@@ -57,7 +256,13 @@ export function MetricsDashboard(): React.ReactElement {
   const recompute = useStore((s) => s.recomputeAggregates);
   const settings = useStore((s) => s.settings);
   const { evUnit, laOptimalMin, laOptimalMax } = settings;
+  const sessionMode = useSessionMode();
+  const liveMetricsView = useStore((s) => s.liveMetricsView);
+  const setLiveMetricsView = useStore((s) => s.setLiveMetricsView);
   const [autoSend, setAutoSendState] = React.useState(getAutoSend());
+
+  const metricKeys = metricsForMode(sessionMode, liveMetricsView);
+  const laRange: [number, number] = [laOptimalMin, laOptimalMax];
 
   const handleToggle = (id: string) => {
     toggleSwing(id);
@@ -66,11 +271,25 @@ export function MetricsDashboard(): React.ReactElement {
 
   if (swings.length === 0) {
     return (
-      <div style={styles.empty}>
-        <div style={{ fontSize: 36 }}>⚾</div>
-        <div style={{ fontSize: 13, color: '#445', marginTop: 12 }}>No swings recorded yet.</div>
-        <div style={{ fontSize: 11, color: '#334', marginTop: 4 }}>
-          Switch to Capture, arm the mic trigger, and take some cuts.
+      <div style={styles.pending}>
+        <div style={styles.pendingHeader}>
+          <div style={{ fontSize: 28 }}>⚾</div>
+          <div style={{ fontSize: 13, color: '#445', marginTop: 8 }}>No swings recorded yet.</div>
+          <div style={{ fontSize: 11, color: '#334', marginTop: 4 }}>
+            Switch to Capture, arm the trigger, and take some cuts.
+          </div>
+        </div>
+
+        <div style={styles.pendingSection}>
+          <div style={styles.pendingSectionHeaderRow}>
+            <div style={styles.sidebarHeader}>
+              METRICS RECORDED THIS SESSION{sessionMode && ` — ${MODE_LABELS[sessionMode]}`}
+            </div>
+            {sessionMode === 'live' && <LiveViewToggle value={liveMetricsView} onChange={setLiveMetricsView} />}
+          </div>
+          <div style={styles.metricsGrid}>
+            {metricKeys.map((key) => renderMetricCard(key, null, evUnit, laRange))}
+          </div>
         </div>
       </div>
     );
@@ -124,8 +343,6 @@ export function MetricsDashboard(): React.ReactElement {
             <AggRow label="Max EV"     value={`${fmtEv(aggregates.maxExitVelocity, evUnit)} ${evUnit}`} />
             <AggRow label="Launch ∠"   value={`${aggregates.avgLaunchAngle.toFixed(1)}°`} />
             <AggRow label="Spin Rate"  value={`${aggregates.avgSpinRate.toFixed(0)} rpm`} />
-            <AggRow label="Hip-Sh Sep" value={`${aggregates.avgHipShoulderSep.toFixed(1)}°`} />
-            <AggRow label="Torque"     value={`${aggregates.avgTorqueNm.toFixed(1)} N·m`} />
           </div>
         )}
 
@@ -156,39 +373,24 @@ export function MetricsDashboard(): React.ReactElement {
       {/* Detail panel for active swing */}
       {activeSwing ? (
         <div style={styles.detail}>
+          {sessionMode === 'live' && (
+            <div style={styles.detailHeaderRow}>
+              <LiveViewToggle value={liveMetricsView} onChange={setLiveMetricsView} />
+            </div>
+          )}
+
           {/* Ball metrics */}
           <div style={styles.metricsGrid}>
-            <MetricCard label="EXIT VELOCITY" value={fmtEv(activeSwing.ball.exitVelocity, evUnit)} unit={evUnit}
-              color="#ff6644" note={evNote(activeSwing.ball.exitVelocity)}
-              badge={activeSwing.ball.evSource === 'radar' ? 'RADAR' : undefined}
-              badgeColor="#44aaff" />
-            <MetricCard label="LAUNCH ANGLE"  value={`${activeSwing.ball.launchAngle}`}  unit="°"
-              color="#44aaff" note={laNote(activeSwing.ball.launchAngle, laOptimalMin, laOptimalMax)} />
-            <MetricCard label="SPRAY ANGLE"   value={`${activeSwing.ball.sprayAngle}`}   unit="°"
-              color="#44ff88" note={saNote(activeSwing.ball.sprayAngle)} />
-            {activeSwing.ball.seam && (
-              <>
-                <MetricCard label="SPIN RATE"  value={`${activeSwing.ball.seam.spinRate.toLocaleString()}`} unit="rpm"
-                  color="#aa88ff" />
-                <MetricCard label="SPIN AXIS"
-                  value={activeSwing.ball.seam.spinAxis.map((v) => v.toFixed(2)).join(', ')}
-                  unit="unit vec" color="#88aaff" />
-                <MetricCard label="SPIN EFF."  value={`${(activeSwing.ball.seam.spinEfficiency * 100).toFixed(0)}`}
-                  unit="%" color="#ffaa44" />
-              </>
-            )}
-            <MetricCard label="DETECT RATE" value={`${(activeSwing.ball.detectRate * 100).toFixed(0)}`} unit="%"
-              color={activeSwing.ball.detectRate >= 0.7 ? '#44ff88' : activeSwing.ball.detectRate >= 0.4 ? '#ffaa00' : '#ff4455'}
-              note={activeSwing.ball.detectRate < 0.4 ? 'Low — check exposure' : undefined} />
-            <MetricCard label="LATENCY" value={`${activeSwing.ball.processingLatencyMs.toFixed(0)}`} unit="ms"
-              color={activeSwing.ball.processingLatencyMs > 400 ? '#ff4455' : '#44ff88'} />
+            {metricKeys.map((key) => renderMetricCard(key, activeSwing.ball, evUnit, laRange))}
           </div>
 
-          {/* Spray chart */}
-          <SprayChart />
-
-          {/* Biomechanics */}
-          {activeSwing.biomech && <BiomechPanel biomech={activeSwing.biomech} />}
+          {/* Spray chart (batted ball) / strike zone (pitch location), per mode */}
+          {(sessionMode === 'pitching' || (sessionMode === 'live' && liveMetricsView !== 'hitting')) && (
+            <StrikeZoneChart location={activeSwing.ball.plateLocation} />
+          )}
+          {(sessionMode === 'hitting' || (sessionMode === 'live' && liveMetricsView !== 'pitching')) && (
+            <SprayChart />
+          )}
         </div>
       ) : (
         <div style={styles.selectPrompt}>← Select a swing to view details</div>
@@ -256,10 +458,25 @@ function saNote(sa: number): string {
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' },
   body: { display: 'flex', flex: 1, overflow: 'hidden' },
-  empty: {
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-    height: '100%', gap: 4,
+  pending: {
+    height: '100%', overflow: 'auto', padding: 24, display: 'flex',
+    flexDirection: 'column', gap: 20,
   },
+  pendingHeader: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
+    padding: '12px 0',
+  },
+  pendingSection: { display: 'flex', flexDirection: 'column', gap: 10 },
+  pendingSectionHeaderRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  detailHeaderRow: { display: 'flex', justifyContent: 'flex-end' },
+  liveToggle: {
+    display: 'flex', border: '1px solid #1a1a2e', borderRadius: 4, overflow: 'hidden', width: 'fit-content',
+  },
+  liveToggleBtn: {
+    padding: '4px 10px', background: 'transparent', border: 'none', borderRight: '1px solid #1a1a2e',
+    color: '#445', cursor: 'pointer', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', fontFamily: 'inherit',
+  },
+  liveToggleBtnActive: { background: '#131326', color: '#4488ff' },
   sidebar: {
     width: 200, minWidth: 200, borderRight: '1px solid #1a1a2e', display: 'flex',
     flexDirection: 'column', overflow: 'hidden',

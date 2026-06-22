@@ -38,6 +38,4 @@ export interface SessionAggregates {
   maxExitVelocity: number;
   avgLaunchAngle: number;
   avgSpinRate: number;      // RPM
-  avgHipShoulderSep: number;
-  avgTorqueNm: number;
 }

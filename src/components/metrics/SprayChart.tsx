@@ -17,33 +17,7 @@
 import React from 'react';
 import { useStore, useSwings, useActiveSwing } from '@/state/store';
 import type { SwingSession } from '@/types/pipeline';
-
-// ── Physics constants ─────────────────────────────────────────────────────────
-const G        = 9.81;    // m/s²
-const DRAG_K   = 0.55;    // empirical drag factor (fly balls)
-const ROLL_K   = 0.55;    // empirical roll factor (ground balls, seconds of roll)
-const MPH_TO_MS = 0.44704;
-const M_TO_FT  = 3.281;
-
-function landingFt(ev: number, la: number, sa: number): [number, number] {
-  const v      = ev * MPH_TO_MS;
-  const laRad  = la * (Math.PI / 180);
-  const saRad  = sa * (Math.PI / 180);
-
-  let rangeFt: number;
-  if (la <= 0) {
-    // Ground ball / line drive below horizontal
-    const rollFactor = Math.max(0.05, 1 + la / 30);
-    rangeFt = v * ROLL_K * rollFactor * M_TO_FT;
-  } else {
-    const rangeM = (v * v * Math.sin(2 * laRad) / G) * DRAG_K;
-    rangeFt = rangeM * M_TO_FT;
-  }
-
-  const x =  rangeFt * Math.sin(saRad);
-  const z = -rangeFt * Math.cos(saRad);   // SVG: outfield is −y
-  return [x, z];
-}
+import { landingFt } from '@/modules/metrics/derived';
 
 // ── EV colour mapping ─────────────────────────────────────────────────────────
 // 60 mph → steel blue, 90 mph → gold, 110+ mph → red-orange

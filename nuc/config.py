@@ -105,6 +105,10 @@ BALL_MASS_KG       = 0.1417
 BALL_DIAMETER_M    = 0.0737
 DRAG_COEFF         = 0.35
 
+# Pitching rubber → front of home plate, regulation distance (60 ft 6 in).
+# Release height/side/extension are measured relative to this.
+RUBBER_DISTANCE_M  = 18.44
+
 # ── Radar (OmniPreSense OPS243-C-FC-RP) ──────────────────────────────────────
 # Single USB-serial port — plug the USB cable into any NUC USB-A port.
 # Linux: usually /dev/ttyACM0 (check: ls /dev/ttyACM*)

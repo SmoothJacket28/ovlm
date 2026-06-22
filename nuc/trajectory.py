@@ -55,6 +55,25 @@ class LaunchMetrics:
     points_rejected: int = 0
 
 
+@dataclass
+class RawFit:
+    """Unrounded fitted state — what pitch_physics.py needs to extrapolate
+    release point and the *measured* (not simulated) curve to the plate.
+
+    x(τ) = x0 + vx0·τ + qx·τ²,  z(τ) = z0 + vz0·τ + qz·τ²
+    y(τ) = y0 + vy0·τ + qy·τ² − ½g·τ²   (gravity re-added; qy only absorbs drag)
+
+    qx/qy/qz are 0 when fewer than _QUADRATIC_MIN_N points forced a linear-only fit.
+    """
+    x0: float; y0: float; z0: float
+    vx0: float; vy0: float; vz0: float
+    qx: float; qy: float; qz: float
+    t0: float
+    points_used: int
+    points_rejected: int
+    residual_mm: float
+
+
 class TrajectoryFitter:
     """
     Fits a ballistic model to an ordered list of 3D points and returns
@@ -62,6 +81,73 @@ class TrajectoryFitter:
     """
 
     def fit(self, points: List[Point3D], latency_ms: float) -> Optional[LaunchMetrics]:
+        fitted_state = self._robust_fit(points)
+        if fitted_state is None:
+            return None
+        coef, mask, t, g_corr, A, obs_w = fitted_state
+
+        # ── Launch metrics from fitted velocity at τ = 0 ─────────────────────
+        vx0, vy0, vz0 = coef[1]  # linear coefficients per axis
+        horiz_speed = math.sqrt(vx0 ** 2 + vz0 ** 2)
+        total_speed = math.sqrt(vx0 ** 2 + vy0 ** 2 + vz0 ** 2)
+
+        exit_vel_mph = total_speed * M_S_TO_MPH
+        launch_angle = math.degrees(math.atan2(vy0, horiz_speed))
+        spray_angle  = math.degrees(math.atan2(vx0, vz0))
+
+        fitted = A @ coef
+        resid_full = np.linalg.norm(obs_w - fitted, axis=1)
+        residual_mm = float(np.sqrt(np.mean(resid_full[mask] ** 2))) * 1000.0
+
+        # ── Smoothed trajectory: fitted model at inlier timestamps ──────────
+        fitted[:, 1] -= g_corr  # restore gravity to y
+        smoothed = [
+            Point3D(x=float(fitted[i, 0]), y=float(fitted[i, 1]),
+                    z=float(fitted[i, 2]), timestamp=float(t[i]))
+            for i in range(len(t)) if mask[i]
+        ]
+        # Only keep points travelling toward the pitcher (z ≥ 0)
+        smoothed = [p for p in smoothed if p.z >= 0]
+
+        return LaunchMetrics(
+            exit_velocity_mph=round(exit_vel_mph, 1),
+            launch_angle_deg=round(launch_angle, 1),
+            spray_angle_deg=round(spray_angle, 1),
+            fit_residual_mm=round(residual_mm, 2),
+            processing_latency_ms=round(latency_ms, 1),
+            trajectory=smoothed,
+            points_used=int(mask.sum()),
+            points_rejected=int(len(t) - mask.sum()),
+        )
+
+    def fit_raw(self, points: List[Point3D]) -> Optional[RawFit]:
+        """Like fit(), but returns the unrounded τ=0 state instead of display metrics."""
+        fitted_state = self._robust_fit(points)
+        if fitted_state is None:
+            return None
+        coef, mask, t, g_corr, A, obs_w = fitted_state
+
+        fitted = A @ coef
+        resid_full = np.linalg.norm(obs_w - fitted, axis=1)
+        residual_mm = float(np.sqrt(np.mean(resid_full[mask] ** 2))) * 1000.0
+
+        x0, y0, z0 = coef[0]   # g_corr(τ=0) = 0, so y0 here is already the true y0
+        vx0, vy0, vz0 = coef[1]
+        qx, qy, qz = coef[2] if coef.shape[0] > 2 else (0.0, 0.0, 0.0)
+
+        return RawFit(
+            x0=float(x0), y0=float(y0), z0=float(z0),
+            vx0=float(vx0), vy0=float(vy0), vz0=float(vz0),
+            qx=float(qx), qy=float(qy), qz=float(qz),
+            t0=float(t[0]),
+            points_used=int(mask.sum()),
+            points_rejected=int(len(t) - mask.sum()),
+            residual_mm=residual_mm,
+        )
+
+    def _robust_fit(self, points: List[Point3D]):
+        """Shared robust least-squares core for fit() and fit_raw().
+        Returns (coef, mask, t, g_corr, A, obs_w) or None if there's not enough data."""
         if len(points) < _MIN_POINTS:
             return None
 
@@ -108,38 +194,5 @@ class TrajectoryFitter:
 
         # Refit on the final inlier set so coef matches mask
         coef, *_ = np.linalg.lstsq(A[mask], obs_w[mask], rcond=None)
-        resid = np.linalg.norm(obs_w - A @ coef, axis=1)
 
-        # ── Launch metrics from fitted velocity at τ = 0 ─────────────────────
-        vx0, vy0, vz0 = coef[1]  # linear coefficients per axis
-        horiz_speed = math.sqrt(vx0 ** 2 + vz0 ** 2)
-        total_speed = math.sqrt(vx0 ** 2 + vy0 ** 2 + vz0 ** 2)
-
-        exit_vel_mph = total_speed * M_S_TO_MPH
-        launch_angle = math.degrees(math.atan2(vy0, horiz_speed))
-        spray_angle  = math.degrees(math.atan2(vx0, vz0))
-
-        inlier_resid = resid[mask]
-        residual_mm = float(np.sqrt(np.mean(inlier_resid ** 2))) * 1000.0
-
-        # ── Smoothed trajectory: fitted model at inlier timestamps ──────────
-        fitted = A @ coef
-        fitted[:, 1] -= g_corr  # restore gravity to y
-        smoothed = [
-            Point3D(x=float(fitted[i, 0]), y=float(fitted[i, 1]),
-                    z=float(fitted[i, 2]), timestamp=float(t[i]))
-            for i in range(len(points)) if mask[i]
-        ]
-        # Only keep points travelling toward the pitcher (z ≥ 0)
-        smoothed = [p for p in smoothed if p.z >= 0]
-
-        return LaunchMetrics(
-            exit_velocity_mph=round(exit_vel_mph, 1),
-            launch_angle_deg=round(launch_angle, 1),
-            spray_angle_deg=round(spray_angle, 1),
-            fit_residual_mm=round(residual_mm, 2),
-            processing_latency_ms=round(latency_ms, 1),
-            trajectory=smoothed,
-            points_used=int(mask.sum()),
-            points_rejected=int(len(points) - mask.sum()),
-        )
+        return coef, mask, t, g_corr, A, obs_w

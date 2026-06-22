@@ -30,6 +30,15 @@ export type PiMessage =
       pitchVelocity:    number | null;   // mph — OPS243 inbound reading (pitch speed)
       carryDistanceM:   number | null;   // metres — OPS243 FMCW range at peak distance
       trajectory: Array<{ x: number; y: number; z: number; t: number }>;
+      // Pitch movement / release — null until pre-contact pitch-trajectory tracking exists
+      verticalBreakIn:   number | null;
+      horizontalBreakIn: number | null;
+      sswBreakVIn:       number | null;
+      sswBreakHIn:       number | null;
+      releaseHeightFt:   number | null;
+      releaseSideFt:     number | null;
+      extensionFt:       number | null;
+      plateLocation:     { xFt: number; yFt: number } | null;
     }
   | { type: 'audio_level'; rms: number; peak: number; threshold: number }
   | { type: 'health'; cpuTempC: number; memUsedMb: number; memTotalMb: number; loadAvg1m: number }
@@ -45,6 +54,7 @@ export type BrowserMessage =
   | { type: 'disarm' }
   | { type: 'reset' }
   | { type: 'set_threshold'; value: number }
+  | { type: 'set_mode'; mode: 'pitching' | 'hitting' | 'live' }
   | { type: 'calib_start'; heightMm: number; distanceMm: number }
   | { type: 'calib_capture' }
   | { type: 'calib_stop' };

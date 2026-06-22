@@ -1,15 +1,17 @@
 import { create } from 'zustand';
 import { createCalibrationSlice, type CalibrationSlice } from './calibration.slice';
 import { createSessionSlice, type SessionSlice } from './session.slice';
+import { createSessionModeSlice, type SessionModeSlice } from './sessionMode.slice';
 import { createMetricsSlice, type MetricsSlice } from './metrics.slice';
 import { createUISlice, type UISlice } from './ui.slice';
 import { createSettingsSlice, type SettingsSlice } from './settings.slice';
 
-export type OVLMStore = CalibrationSlice & SessionSlice & MetricsSlice & UISlice & SettingsSlice;
+export type OVLMStore = CalibrationSlice & SessionSlice & SessionModeSlice & MetricsSlice & UISlice & SettingsSlice;
 
 export const useStore = create<OVLMStore>()((...args) => ({
   ...createCalibrationSlice(...args),
   ...createSessionSlice(...args),
+  ...createSessionModeSlice(...args),
   ...createMetricsSlice(...args),
   ...createUISlice(...args),
   ...createSettingsSlice(...args),
@@ -24,6 +26,7 @@ export const useActiveSwing = () =>
   useStore((s) => s.swings.find((sw) => sw.id === s.activeSwingId) ?? null);
 export const useSwings = () => useStore((s) => s.swings);
 export const useUIPanel = () => useStore((s) => s.activePanel);
+export const useSessionMode = () => useStore((s) => s.sessionMode);
 export const useOverlays = () => useStore((s) => s.overlaysEnabled);
 export const useSelectedStadium = () => useStore((s) => s.selectedStadiumId);
 export const useCameraPreset = () => useStore((s) => s.cameraPreset);

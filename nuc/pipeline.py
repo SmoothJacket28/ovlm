@@ -8,6 +8,8 @@ Receives flushed frame windows from FrameBuffer, runs:
   - Stereo triangulation
   - Robust ballistic trajectory fitting
   - Launch metric calculation
+  - For inbound (kind == "pitch") events: break, release point, extension,
+    and plate location via pitch_physics.py
 and broadcasts results via WebSocket.
 """
 
@@ -17,6 +19,7 @@ import time
 from typing import List, Optional
 
 import config
+import pitch_physics
 from capture import FramePair
 from seam_tracker import SeamTracker, SpinMeasurement
 from tracker import BallTracker
@@ -52,9 +55,9 @@ class TrackingPipeline:
                 config.CALIBRATION_FILE,
             )
 
-    def process(self, frames: List[FramePair], trigger_time: float) -> None:
+    def process(self, frames: List[FramePair], trigger_time: float, kind: str = "hit") -> None:
         t_start = time.monotonic()
-        log.info("Processing %d frame pairs …", len(frames))
+        log.info("Processing %d frame pairs … (kind=%s)", len(frames), kind)
 
         self._tracker0.reset()
         self._tracker1.reset()
@@ -210,6 +213,44 @@ class TrackingPipeline:
             metrics.points_used, metrics.points_rejected,
         )
 
+        # ── Pitch-specific physics: break, release point, extension, plate
+        # location — only meaningful for an inbound (radar pitch-trigger) event.
+        pitch_metrics: Optional[pitch_physics.PitchPhysics] = None
+        if kind == "pitch":
+            raw_fit = self._fitter.fit_raw(points)
+            if raw_fit is not None:
+                pitch_metrics = pitch_physics.compute_pitch_metrics(raw_fit, spin)
+
+                # Prefer OPS243's Doppler reading when it agrees with the camera
+                # (same agree/replace pattern as the EV cross-check above); fall
+                # back to the camera-only estimate when radar isn't available.
+                if pitch_metrics.camera_speed_mph is not None:
+                    cam_pitch_mph = pitch_metrics.camera_speed_mph
+                    if pitch_velocity_mph is not None:
+                        delta = abs(pitch_velocity_mph - cam_pitch_mph) / max(cam_pitch_mph, 1)
+                        if delta <= config.OPS243_AGREE_FRACTION:
+                            log.info("OPS243 pitch %.1f mph (camera=%.1f mph, Δ=%.1f%%)",
+                                     pitch_velocity_mph, cam_pitch_mph, 100 * delta)
+                        else:
+                            log.info("OPS243 pitch %.1f mph disagrees with camera %.1f mph "
+                                      "(Δ=%.1f%% > %.0f%% tolerance) — keeping radar",
+                                      pitch_velocity_mph, cam_pitch_mph, 100 * delta,
+                                      config.OPS243_AGREE_FRACTION * 100)
+                    else:
+                        pitch_velocity_mph = cam_pitch_mph
+
+                log.info(
+                    "Pitch physics: VB=%s in  HB=%s in  SSW=(%s, %s) in  "
+                    "release=(%.2f, %.2f) ft  ext=%.2f ft  plate=(%s, %s) ft",
+                    pitch_metrics.vertical_break_in, pitch_metrics.horizontal_break_in,
+                    pitch_metrics.ssw_break_v_in, pitch_metrics.ssw_break_h_in,
+                    pitch_metrics.release_side_ft or 0.0, pitch_metrics.release_height_ft or 0.0,
+                    pitch_metrics.extension_ft or 0.0,
+                    pitch_metrics.plate_x_ft, pitch_metrics.plate_y_ft,
+                )
+            else:
+                log.warning("Pitch event but fit_raw() failed — not enough/garbage points")
+
         payload = {
             "type":               "measurement",
             "exitVelocity":       metrics.exit_velocity_mph,
@@ -222,12 +263,26 @@ class TrackingPipeline:
             "pointsRejected":     metrics.points_rejected,
             "evSource":           ev_source,
             "radarVelocityMps":   round(radar_velocity_mps, 3) if radar_velocity_mps is not None else None,
-            "pitchVelocity":      pitch_velocity_mph,   # mph, from OPS243 inbound reading
+            "pitchVelocity":      pitch_velocity_mph,   # mph — OPS243 inbound reading, camera cross-checked/used as fallback
             "carryDistanceM":     carry_distance_m,     # meters, from OPS243 FMCW range
             "trajectory":         [
                 {"x": p.x, "y": p.y, "z": p.z, "t": p.timestamp}
                 for p in metrics.trajectory
             ],
+            # Pitch movement / release — only populated for kind == "pitch"
+            # (see pitch_physics.py); null for hit events, where they don't apply.
+            "verticalBreakIn":   pitch_metrics.vertical_break_in if pitch_metrics else None,
+            "horizontalBreakIn": pitch_metrics.horizontal_break_in if pitch_metrics else None,
+            "sswBreakVIn":       pitch_metrics.ssw_break_v_in if pitch_metrics else None,
+            "sswBreakHIn":       pitch_metrics.ssw_break_h_in if pitch_metrics else None,
+            "releaseHeightFt":   pitch_metrics.release_height_ft if pitch_metrics else None,
+            "releaseSideFt":     pitch_metrics.release_side_ft if pitch_metrics else None,
+            "extensionFt":       pitch_metrics.extension_ft if pitch_metrics else None,
+            "plateLocation": (
+                {"xFt": pitch_metrics.plate_x_ft, "yFt": pitch_metrics.plate_y_ft}
+                if pitch_metrics and pitch_metrics.plate_x_ft is not None and pitch_metrics.plate_y_ft is not None
+                else None
+            ),
         }
 
         if spin is not None:

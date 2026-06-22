@@ -21,7 +21,9 @@ This driver:
     and a configurable minimum speed threshold.
   - Exposes latest_pitch_mph(), latest_ev_mph(), latest_range_m().
   - Fires an optional trigger callback when a fast outbound ball is detected
-    (mirrors the IWR6843Reader API so pipeline.py can treat them the same).
+    (mirrors the IWR6843Reader API so pipeline.py can treat them the same),
+    and a separate pitch-trigger callback on fast inbound detections (used
+    for Pitching/Live sessions, which have no bat-crack to listen for).
 
 Usage
 -----
@@ -77,6 +79,8 @@ class OPS243Reader:
         self._thread: Optional[threading.Thread] = None
         self._trigger_cb: Optional[TriggerCallback] = None
         self._last_trigger = 0.0
+        self._pitch_trigger_cb: Optional[TriggerCallback] = None
+        self._last_pitch_trigger = 0.0
 
         self._lock          = threading.Lock()
         self._pitch_mps:  Optional[float] = None   # last inbound speed (m/s)
@@ -88,6 +92,10 @@ class OPS243Reader:
     def set_trigger_callback(self, cb: TriggerCallback) -> None:
         """Fires on each outbound detection above min_ev (exit velocity event)."""
         self._trigger_cb = cb
+
+    def set_pitch_trigger_callback(self, cb: TriggerCallback) -> None:
+        """Fires on each inbound detection above min_pitch (pitch-release event)."""
+        self._pitch_trigger_cb = cb
 
     def latest_pitch_mph(self) -> Optional[float]:
         with self._lock:
@@ -174,7 +182,9 @@ class OPS243Reader:
                 self._pitch_mps = abs(speed_mps)
                 if range_m is not None:
                     self._range_m = range_m
-            log.debug("Pitch: %.1f mph", abs(speed_mps) * MPS_TO_MPH)
+            pitch_mph = abs(speed_mps) * MPS_TO_MPH
+            log.debug("Pitch: %.1f mph", pitch_mph)
+            self._maybe_trigger_pitch(pitch_mph, range_m)
 
         elif speed_mps > self._min_ev:
             with self._lock:
@@ -193,3 +203,11 @@ class OPS243Reader:
         if now - self._last_trigger >= self._debounce:
             self._last_trigger = now
             self._trigger_cb(ev_mph, range_m)
+
+    def _maybe_trigger_pitch(self, pitch_mph: float, range_m: Optional[float]) -> None:
+        if not self._pitch_trigger_cb:
+            return
+        now = time.monotonic()
+        if now - self._last_pitch_trigger >= self._debounce:
+            self._last_pitch_trigger = now
+            self._pitch_trigger_cb(pitch_mph, range_m)

@@ -48,6 +48,14 @@ export function computeBallMetrics(
     radarVelocityMph: null,
     pitchVelocityMph: null,
     carryDistanceM:   null,
+    verticalBreakIn:   null,
+    horizontalBreakIn: null,
+    sswBreakVIn:       null,
+    sswBreakHIn:       null,
+    releaseHeightFt:   null,
+    releaseSideFt:     null,
+    extensionFt:       null,
+    plateLocation:     null,
   };
 }
 
