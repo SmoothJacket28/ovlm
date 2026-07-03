@@ -119,7 +119,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set) => ({
         releaseSideFt:     msg.releaseSideFt ?? null,
         extensionFt:       msg.extensionFt ?? null,
         plateLocation:     msg.plateLocation ?? null,
-        trajectory: msg.trajectory.map((p) => ({
+        trajectory: (msg.trajectory ?? []).map((p) => ({
           x: p.x, y: p.y, z: p.z,
           timestamp: p.t * 1_000_000,
         })),

@@ -323,7 +323,7 @@ const styles: Record<string, React.CSSProperties> = {
   svg: {
     display: 'block',
     width: '100%',
-    fontFamily: "'JetBrains Mono','Fira Code',monospace",
+    fontFamily: "'JetBrains Mono','Fira Code','SF Mono','Menlo','Consolas',monospace",
   },
   legend: {
     display: 'flex',

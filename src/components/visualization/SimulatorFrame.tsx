@@ -78,6 +78,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: '0.1em',
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', 'Menlo', 'Consolas', monospace",
   },
 };

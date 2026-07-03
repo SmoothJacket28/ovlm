@@ -108,6 +108,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     maxWidth: 260,
     margin: '8px auto 12px',
-    fontFamily: "'JetBrains Mono','Fira Code',monospace",
+    fontFamily: "'JetBrains Mono','Fira Code','SF Mono','Menlo','Consolas',monospace",
   },
 };

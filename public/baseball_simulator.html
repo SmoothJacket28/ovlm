@@ -4,11 +4,11 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>MLB Stadium Ball Flight Simulator</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/vendor/tailwind.css"/>
 <style>
 :root { --pri: #0ea5e9; --sec: #6366f1; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { overflow: hidden; font-family: 'Courier New', monospace; }
+body { overflow: hidden; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; }
 canvas { display: block; }
 input[type=range] {
   -webkit-appearance: none; appearance: none;
@@ -57,7 +57,7 @@ input[type=range]::-webkit-slider-thumb {
 select, input[type=number] {
   background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
   border-radius: 4px; padding: 4px 8px; font-size: 12px;
-  font-family: 'Courier New', monospace;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
 }
 select { width: 100%; }
 select:focus, input[type=number]:focus { outline: none; border-color: #38bdf8; }
@@ -65,13 +65,13 @@ input[type=number] { width: 70px; padding: 2px 6px; }
 .cal-btn {
   font-size: 10px; background: #1e293b; border: 1px solid #334155;
   color: #94a3b8; border-radius: 4px; padding: 3px 8px; cursor: pointer;
-  transition: all 0.15s; font-family: 'Courier New', monospace;
+  transition: all 0.15s; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
 }
 .cal-btn:hover { background: #334155; color: #e2e8f0; }
 .view-btn {
   font-size: 10px; background: #0f1f35; border: 1px solid #1e3a5f;
   color: #7dd3fc; border-radius: 5px; padding: 5px 4px; cursor: pointer;
-  transition: all 0.15s; text-align: center; font-family: 'Courier New', monospace;
+  transition: all 0.15s; text-align: center; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
 }
 .view-btn:hover { background: #1e3a5f; color: #fff; border-color: var(--sec); }
 .view-btn.active { background: var(--pri); border-color: var(--sec); color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
@@ -79,7 +79,7 @@ input[type=number] { width: 70px; padding: 2px 6px; }
   flex: 1; padding: 6px 0; border-radius: 5px; font-size: 11px; font-weight: 700;
   letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; text-align: center;
   background: transparent; border: 1px solid transparent; color: #475569;
-  font-family: 'Courier New', monospace; transition: all 0.15s;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; transition: all 0.15s;
 }
 .mode-btn.active { background: var(--pri); border-color: var(--sec); color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
 /* Play outcome banner */
@@ -94,12 +94,12 @@ input[type=number] { width: 70px; padding: 2px 6px; }
 }
 #playBanner.show { display: block; animation: bannerPop 2.8s ease forwards; }
 #playBanner .pb-text {
-  font: 900 34px 'Courier New', monospace; letter-spacing: 0.12em;
+  font: 900 34px 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; letter-spacing: 0.12em;
   color: #fff; text-shadow: 0 2px 14px rgba(125,211,252,0.85);
   white-space: nowrap;
 }
 #playBanner .pb-sub {
-  font: 700 13px 'Courier New', monospace; letter-spacing: 0.3em;
+  font: 700 13px 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; letter-spacing: 0.3em;
   color: #bfdbfe; margin-top: 3px;
 }
 @keyframes bannerPop {
@@ -111,11 +111,11 @@ input[type=number] { width: 70px; padding: 2px 6px; }
 }
 /* HitTrax-style session panel */
 .htx-lab  { font-size: 9px; color: #7c8694; letter-spacing: 0.08em; font-weight: 600; }
-.htx-big  { font-size: 16px; font-weight: 800; color: #fff; font-family: 'Courier New', monospace; line-height: 1.15; }
-.htx-sm   { font-size: 11px; font-weight: 700; color: #e8edf3; font-family: 'Courier New', monospace; }
+.htx-big  { font-size: 16px; font-weight: 800; color: #fff; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; line-height: 1.15; }
+.htx-sm   { font-size: 11px; font-weight: 700; color: #e8edf3; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; }
 .htx-thead span { font-size: 9px; color: #ff4d5e; font-weight: 800; letter-spacing: 0.05em; }
 .htx-row  { line-height: 1.6; }
-.htx-row span { font-size: 10px; color: #cfd6de; font-family: 'Courier New', monospace; }
+.htx-row span { font-size: 10px; color: #cfd6de; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; }
 .htx-row:nth-child(even) { background: rgba(255,255,255,0.035); }
 /* Session / player / contact-point additions */
 .chip { font-size: 9px; font-weight: 800; letter-spacing: 0.1em; padding: 2px 8px; border-radius: 9999px; }
@@ -123,10 +123,10 @@ input[type=number] { width: 70px; padding: 2px 6px; }
 .pl-input {
   background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
   border-radius: 4px; padding: 4px 8px; font-size: 12px; width: 100%;
-  font-family: 'Courier New', monospace;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
 }
 .pl-input:focus { outline: none; border-color: #fb923c; }
-.htx-strip { font-size: 9px; letter-spacing: 0.08em; font-weight: 700; font-family: 'Courier New', monospace; }
+.htx-strip { font-size: 9px; letter-spacing: 0.08em; font-weight: 700; font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace; }
 </style>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex">
@@ -644,7 +644,7 @@ input[type=number] { width: 70px; padding: 2px 6px; }
 </div>
 
 <script type="importmap">
-{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"}}
+{"imports":{"three":"/vendor/three/three.module.js","three/addons/":"/vendor/three/"}}
 </script>
 <script type="module">
 import * as THREE from 'three';
@@ -1674,7 +1674,7 @@ const loader = new GLTFLoader();
 // The vendored stadium GLBs are Draco-compressed (geometry) + WebP (textures).
 // Decoder wasm comes from the same jsdelivr three.js release as the addons.
 const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/');
+dracoLoader.setDecoderPath('/vendor/three/libs/draco/');
 loader.setDRACOLoader(dracoLoader);
 
 function prepAndCache(filename, gltf) {

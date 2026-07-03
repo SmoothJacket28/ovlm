@@ -14,7 +14,7 @@ function currentStreak(swings: SwingSession[], threshold: number): number {
 }
 
 function fmtEv(ev: number, unit: 'mph' | 'kph'): string {
-  return unit === 'kph' ? (ev * MPH_TO_KPH).toFixed(1) : String(ev);
+  return (unit === 'kph' ? ev * MPH_TO_KPH : ev).toFixed(1);
 }
 
 const PAD   = { top: 18, right: 20, bottom: 28, left: 42 };
@@ -317,6 +317,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'block',
     width: '100%',
     overflow: 'visible',
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', 'Menlo', 'Consolas', monospace",
   },
 };

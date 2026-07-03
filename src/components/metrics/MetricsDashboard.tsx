@@ -129,7 +129,7 @@ const MODE_LABELS: Record<SessionMode, string> = {
 const MPH_TO_KPH = 1.60934;
 
 function fmtEv(ev: number, unit: 'mph' | 'kph'): string {
-  return unit === 'kph' ? (ev * MPH_TO_KPH).toFixed(1) : String(ev);
+  return (unit === 'kph' ? ev * MPH_TO_KPH : ev).toFixed(1);
 }
 
 /** One metric card for `key`. `ball` is null in the pre-session preview, where every card shows a dash. */

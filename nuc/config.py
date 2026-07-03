@@ -19,9 +19,17 @@ WIDTH      = 640
 HEIGHT     = 480
 FRAMERATE  = 210         # fps, stereo pair — must match a mode the sensor supports
 
-# OpenCV capture backend — CAP_MSMF is the Windows default (Media Foundation).
-# Switch to cv2.CAP_DSHOW if MSMF can't reach the target framerate.
-CAMERA_BACKEND = cv2.CAP_MSMF
+# OpenCV capture backend — picked per OS. Windows: CAP_MSMF (Media Foundation;
+# switch to cv2.CAP_DSHOW if MSMF can't reach the target framerate).
+# macOS: CAP_AVFOUNDATION (the only backend that can open cameras on a Mac —
+# MSMF/DSHOW don't exist there). Linux: CAP_V4L2.
+import sys as _sys
+if _sys.platform == "win32":
+    CAMERA_BACKEND = cv2.CAP_MSMF
+elif _sys.platform == "darwin":
+    CAMERA_BACKEND = cv2.CAP_AVFOUNDATION
+else:
+    CAMERA_BACKEND = cv2.CAP_V4L2
 
 # These cameras only deliver their high frame rates over MJPEG (the default
 # YUY2/uncompressed path caps at ~30 fps). The FOURCC must be set BEFORE the
@@ -38,6 +46,11 @@ CAMERA_FOURCC = "MJPG"
 # Tune interactively with: python camera_check.py --preview
 #
 # Note: exact range and step size are camera/driver-dependent.
+#
+# macOS: AVFoundation ignores manual exposure for most external UVC cameras —
+# the cap.set() calls fail soft and the camera stays on auto-exposure. Point
+# the cameras away from bright light so auto-exposure settles short, and use
+# `python camera_check.py --preview` to verify the ball isn't smearing.
 EXPOSURE_VALUE  = -11    # overridden by camera_settings.json if present
 GAIN_VALUE      = 4      # 0–255 for most DirectShow/MSMF cameras; -1 to skip
 

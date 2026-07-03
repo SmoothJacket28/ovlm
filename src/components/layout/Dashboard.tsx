@@ -83,7 +83,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     background: '#0a0a0f',
     color: '#e0e0e8',
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', 'Menlo', 'Consolas', monospace",
   },
   nav: {
     width: 72,
