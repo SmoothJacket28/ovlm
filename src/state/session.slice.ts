@@ -50,6 +50,9 @@ const defaultPipelineStatus: PipelineStatus = {
 
 const STORAGE_KEY_HOST   = 'ovlm_pi_host';
 const STORAGE_KEY_ATR    = 'ovlm_all_time_ev';   // all-time record EV
+// Watermark set by clearSwings: archived swings at or before this epoch-ms
+// stay hidden from restores (the durable archive itself is never touched).
+const STORAGE_KEY_CLEARED = 'ovlm_cleared_before';
 
 // Backend runs on this machine since the NUC port — migrate the stale
 // Raspberry Pi default if it's what's saved, but leave custom hosts alone.
@@ -127,7 +130,13 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set) => ({
     set({ wsHost: host });
   },
 
-  clearSwings: () => set({ swings: [], activeSwingId: null }),
+  clearSwings: () => {
+    // Clearing hides history, it does not delete it: mark the moment so
+    // archive restores (backend replay / IndexedDB hydration) don't
+    // resurrect the swings the user just dismissed.
+    localStorage.setItem(STORAGE_KEY_CLEARED, String(Date.now()));
+    set({ swings: [], activeSwingId: null });
+  },
 
   updateAudioLevel: (level)  => set({ audioLevel: level }),
   updatePiHealth:   (health) => set({ piHealth: health }),
@@ -142,8 +151,10 @@ function mergeSessionsInto(
   s: Pick<SessionSlice, 'swings' | 'allTimeBestEv' | 'activeSwingId'>,
   incoming: SwingSession[],
 ): Partial<SessionSlice> {
+  const clearedBefore = parseFloat(localStorage.getItem(STORAGE_KEY_CLEARED) ?? '0') || 0;
   const known = new Set(s.swings.map((sw) => sw.id));
-  const restored = incoming.filter((sw) => !known.has(sw.id));
+  const restored = incoming.filter(
+    (sw) => !known.has(sw.id) && sw.timestamp > clearedBefore);
   if (restored.length === 0) return {};
   const swings = [...s.swings, ...restored]
     .sort((a, b) => b.timestamp - a.timestamp);
