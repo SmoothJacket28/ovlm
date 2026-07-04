@@ -196,6 +196,20 @@ RADAR_AGREE_FRACTION        = 0.15
 WS_HOST = "0.0.0.0"
 WS_PORT = 8765
 
+# ── Swing storage (durable local archive) ─────────────────────────────────────
+# Every measured swing is appended, fsync'd, to a monthly JSONL file BEFORE
+# it is broadcast — a crash or power loss can never lose an acknowledged
+# swing, and append-only files have no corruption modes beyond a torn last
+# line (which the reader skips). See swing_store.py for the full rationale.
+SWING_STORE_ENABLED = True
+# None = platform default (macOS: ~/Library/Application Support/OVLM/swings)
+SWING_STORE_DIR: str | None = None
+# Trajectory floats are rounded to this many decimals before storage
+# (3 = millimetres, far below triangulation noise). Dominates record size.
+SWING_TRAJECTORY_DECIMALS = 3
+# How many stored swings the dashboard receives on connect (get_history).
+SWING_HISTORY_LIMIT = 100
+
 # ── Home-plate AI calibration ─────────────────────────────────────────────────
 # Calibrate the stereo rig from a regulation home plate in view — no ChArUco
 # board. A keypoint model (plate_detector.py) finds the plate's 5 corners in

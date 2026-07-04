@@ -33,6 +33,7 @@ import ops243
 import pipeline as pipeline_mod
 from capture import FramePair
 from ops243 import OPS243Reader
+from swing_store import SwingStore
 from triangulate import Point3D
 
 MPS_TO_MPH = 2.23694
@@ -116,9 +117,10 @@ def make_reader():
     )
 
 
-def build_pipeline(points, reader):
+def build_pipeline(points, reader, store=None):
     server = FakeServer()
-    pipe = pipeline_mod.TrackingPipeline(server, radar=None, ops243=reader, spin_ring=None)
+    pipe = pipeline_mod.TrackingPipeline(server, radar=None, ops243=reader, spin_ring=None,
+                                         store=store)
     pipe._tracker0 = FakeTracker()
     pipe._tracker1 = FakeTracker()
     pipe._seam = FakeSeam()
@@ -199,6 +201,52 @@ class TestHitFusion(unittest.TestCase):
         expected = round((radial_pitch_mps * MPS_TO_MPH)
                          / config.OPS243_PITCH_COS_DEFAULT, 1)
         self.assertAlmostEqual(msg['pitchVelocity'], expected, places=1)
+
+
+class TestSwingPersistence(unittest.TestCase):
+    def test_swing_stored_before_broadcast_with_matching_id(self):
+        import tempfile
+        v = 100.0 / MPS_TO_MPH
+        pts = ballistic_points((0.0, 1.0, 0.0), (0.0, v * 0.42, v * 0.9))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SwingStore(directory=tmp)
+            server = FakeServer()
+            pipe = pipeline_mod.TrackingPipeline(
+                server, radar=None, ops243=None, spin_ring=None, store=store)
+            pipe._tracker0 = FakeTracker()
+            pipe._tracker1 = FakeTracker()
+            pipe._seam = FakeSeam()
+            pipe._triangulator = ScriptedTriangulator(pts)
+            pipe.process(dummy_frames(), trigger_time=0.0, kind="hit")
+
+            msg = server.measurement()
+            self.assertIsNotNone(msg)
+            # Broadcast carries the archive identity …
+            self.assertIn('id', msg)
+            self.assertIn('timestamp', msg)
+            # … and the durable record on disk is the same swing.
+            stored = store.load_recent(10)
+            self.assertEqual(len(stored), 1)
+            self.assertEqual(stored[0]['id'], msg['id'])
+            self.assertEqual(stored[0]['exitVelocity'], msg['exitVelocity'])
+            self.assertEqual(stored[0]['kind'], 'hit')
+
+    def test_store_failure_does_not_block_broadcast(self):
+        class ExplodingStore:
+            def append(self, payload, kind='hit'):
+                raise OSError("disk full")
+
+        v = 100.0 / MPS_TO_MPH
+        pts = ballistic_points((0.0, 1.0, 0.0), (0.0, v * 0.42, v * 0.9))
+        server = FakeServer()
+        pipe = pipeline_mod.TrackingPipeline(
+            server, radar=None, ops243=None, spin_ring=None, store=ExplodingStore())
+        pipe._tracker0 = FakeTracker()
+        pipe._tracker1 = FakeTracker()
+        pipe._seam = FakeSeam()
+        pipe._triangulator = ScriptedTriangulator(pts)
+        pipe.process(dummy_frames(), trigger_time=0.0, kind="hit")
+        self.assertIsNotNone(server.measurement())
 
 
 class TestPitchFusion(unittest.TestCase):

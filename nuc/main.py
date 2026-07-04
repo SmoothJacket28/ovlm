@@ -24,6 +24,7 @@ from pipeline import TrackingPipeline
 from ops243 import OPS243Reader
 from radar import IWR6843Reader
 from server import PipelineServer
+from swing_store import SwingStore
 
 
 def main() -> None:
@@ -72,7 +73,18 @@ def main() -> None:
         spin_ring = SpinFrameRing()
         spin_cap  = SpinCapturer(on_frame=spin_ring.push)
 
-    pipeline = TrackingPipeline(server, radar=radar, ops243=ops243, spin_ring=spin_ring)
+    # Durable swing archive — every measurement is fsync'd to monthly JSONL
+    # files before broadcast (see swing_store.py). Survives crashes, restarts,
+    # and power loss; the dashboard replays it on connect via get_history.
+    store: SwingStore | None = None
+    if config.SWING_STORE_ENABLED:
+        store = SwingStore(directory=config.SWING_STORE_DIR,
+                           trajectory_decimals=config.SWING_TRAJECTORY_DECIMALS)
+        log.info("Swing store: %s (%d swings, %.1f KB)",
+                 store.directory, store.count(), store.disk_usage_bytes() / 1024)
+
+    pipeline = TrackingPipeline(server, radar=radar, ops243=ops243, spin_ring=spin_ring,
+                                store=store)
     buffer   = FrameBuffer(on_flush=pipeline.process)
     capturer = StereoCapturer(on_pair=buffer.push)
 
@@ -182,7 +194,8 @@ def main() -> None:
 
     server.set_callbacks(arm=arm, disarm=disarm, reset=reset, set_threshold=set_threshold, set_mode=set_mode,
                          calib_start=calib_start, calib_capture=calib_capture,
-                         calib_stop=calib_stop)
+                         calib_stop=calib_stop,
+                         get_history=(store.load_recent if store is not None else None))
 
     log.info("Starting stereo capture …")
     try:

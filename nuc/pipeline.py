@@ -33,11 +33,12 @@ MPS_TO_MPH = 2.23694
 
 
 class TrackingPipeline:
-    def __init__(self, server, radar=None, ops243=None, spin_ring=None) -> None:
+    def __init__(self, server, radar=None, ops243=None, spin_ring=None, store=None) -> None:
         self._server       = server
         self._radar        = radar       # optional IWR6843Reader (TI mmWave)
         self._ops243       = ops243      # optional OPS243Reader (OmniPreSense)
         self._spin_ring    = spin_ring   # optional SpinFrameRing (640 fps spin cam)
+        self._store        = store       # optional SwingStore (durable archive)
         self._tracker0     = BallTracker()
         self._tracker1     = BallTracker()
         self._tracker_spin = BallTracker(
@@ -343,6 +344,16 @@ class TrackingPipeline:
                 "framesUsed":   spin.frames_analyzed,
                 "source":       spin_source,
             }
+
+        # Persist BEFORE broadcasting: the stored record gains a stable id
+        # and timestamp, and both the archive and every connected dashboard
+        # then agree on them (the dashboard dedupes history replays by id).
+        # A storage failure must never block the live measurement.
+        if self._store is not None:
+            try:
+                payload = self._store.append(payload, kind=kind)
+            except Exception:
+                log.exception("Swing store append failed — broadcasting unstored swing")
 
         self._server.broadcast(payload)
         self._server.broadcast({"type": "status", "state": "armed"})

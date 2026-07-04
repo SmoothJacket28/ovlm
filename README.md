@@ -69,6 +69,22 @@ Dashboard steps are identical to macOS.
 - See `nuc/config.py` for all tunables and `nuc/CALIBRATION.md` for the
   calibration guide
 
+## Swing storage
+
+Every measured swing is stored durably on the machine running the monitor
+— on a Mac: `~/Library/Application Support/OVLM/swings/` — as append-only
+monthly JSONL files, fsync'd before the swing is even broadcast. A crash or
+power cut can never lose an acknowledged swing or corrupt earlier ones (the
+worst case is one torn last line, which the reader skips). Records are
+compacted (nulls dropped, trajectories rounded to millimetres): ~700 bytes
+per swing, so a year of daily sessions is ~25 MB. The files are plain JSON
+lines — readable with `jq`, pandas, or a text editor.
+
+The dashboard restores automatically from two sources, deduplicated by the
+swing id the store assigns: the backend replays the archive on every
+connect, and the browser keeps an IndexedDB mirror so even a page refresh
+with the backend offline restores the session instantly.
+
 ## Notes
 
 - **Exposure on macOS:** AVFoundation ignores manual exposure on most external

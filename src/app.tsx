@@ -3,6 +3,7 @@ import { Dashboard } from './components/layout/Dashboard';
 import { useStore } from './state/store';
 import { piClient } from './ws/client';
 import { initSimulatorBridge } from './integrations/simulator';
+import { loadArchivedSwings, persistSwings } from './modules/storage/swing-archive';
 
 export function App(): React.ReactElement {
   const wsHost              = useStore((s) => s.wsHost);
@@ -13,6 +14,8 @@ export function App(): React.ReactElement {
   const setLastFrame        = useStore((s) => s.setLastFrame);
   const setCalibWizardResult = useStore((s) => s.setCalibWizardResult);
   const setWizardStep       = useStore((s) => s.setWizardStep);
+  const mergeStoredSwings   = useStore((s) => s.mergeStoredSwings);
+  const mergeSessions       = useStore((s) => s.mergeSessions);
 
   useEffect(() => {
     piClient.connect(wsHost, {
@@ -23,12 +26,29 @@ export function App(): React.ReactElement {
       setLastFrame,
       setCalibWizardResult,
       setWizardStep,
+      mergeStoredSwings,
     });
     return () => piClient.disconnect();
   }, [wsHost]);
 
   useEffect(() => {
     initSimulatorBridge(); // ready-handshake + auto-forward swings to the sim
+  }, []);
+
+  useEffect(() => {
+    // Hydrate the session from the browser mirror (instant, works offline),
+    // then keep the mirror current. The backend archive replays on connect;
+    // ids dedupe the two sources.
+    loadArchivedSwings().then((archived) => {
+      if (archived.length) mergeSessions(archived);
+    });
+    let last = useStore.getState().swings;
+    return useStore.subscribe((state) => {
+      if (state.swings !== last) {
+        last = state.swings;
+        persistSwings(state.swings);
+      }
+    });
   }, []);
 
   return (

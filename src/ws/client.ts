@@ -15,6 +15,7 @@ type StoreRef = {
   setLastFrame: (frame: Extract<PiMessage, { type: 'calib_frame' }>) => void;
   setCalibWizardResult: (r: Extract<PiMessage, { type: 'calib_result' }>) => void;
   setWizardStep: (step: 0 | 1 | 2 | 3) => void;
+  mergeStoredSwings: (swings: Extract<PiMessage, { type: 'history' }>['swings']) => void;
 };
 
 const BACKOFF_CAP_MS = 30_000;
@@ -62,6 +63,9 @@ class PiClient {
     this.ws.onopen = () => {
       this.backoff = 1000;
       this.store?.updatePipelineStatus({ wsConnected: true, errorMessage: undefined });
+      // Restore the durable archive on every (re)connect — dedupe by id
+      // makes this idempotent.
+      this.send({ type: 'get_history', limit: 100 });
     };
 
     this.ws.onclose = () => {
@@ -114,6 +118,9 @@ class PiClient {
       case 'calib_result':
         this.store.setCalibWizardResult(msg);
         this.store.setWizardStep(msg.ok ? 3 : 1);
+        break;
+      case 'history':
+        this.store.mergeStoredSwings(msg.swings ?? []);
         break;
     }
   }

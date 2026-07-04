@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand';
 import type { SwingSession, PipelineStatus } from '@/types/pipeline';
 import type { BallMeasurement } from '@/types/tracking';
-import type { PiMessage } from '@/ws/messages';
+import type { PiMessage, StoredSwing } from '@/ws/messages';
 
 type MeasurementMsg = Extract<PiMessage, { type: 'measurement' }>;
 
@@ -32,6 +32,8 @@ export interface SessionSlice {
   setActiveSwing: (id: string | null) => void;
   updatePipelineStatus: (patch: Partial<PipelineStatus>) => void;
   ingestPiMeasurement: (msg: MeasurementMsg) => void;
+  mergeStoredSwings: (stored: StoredSwing[]) => void;
+  mergeSessions: (sessions: SwingSession[]) => void;
   setWsHost: (host: string) => void;
   clearSwings: () => void;
   updateAudioLevel: (level: AudioLevel) => void;
@@ -89,50 +91,13 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set) => ({
 
   ingestPiMeasurement: (msg) =>
     set((s) => {
-      const ball: BallMeasurement = {
-        exitVelocity: msg.exitVelocity,
-        launchAngle: msg.launchAngle,
-        sprayAngle: msg.sprayAngle,
-        seam: msg.spin
-          ? {
-              spinRate: msg.spin.rpm,
-              spinAxis: msg.spin.axis,
-              spinEfficiency: msg.spin.efficiency,
-              seamFrames: [],
-              confidence: msg.spin.confidence,
-            }
-          : null,
-        contactFrameIndex: 0,
-        processingLatencyMs: msg.latencyMs,
-        detectRate: msg.detectRate,
-        evSource: msg.evSource,
-        radarVelocityMph: msg.radarVelocityMps != null
-          ? Math.round(msg.radarVelocityMps * 2.23694 * 10) / 10
-          : null,
-        pitchVelocityMph: msg.pitchVelocity ?? null,
-        carryDistanceM:   msg.carryDistanceM ?? null,
-        verticalBreakIn:   msg.verticalBreakIn ?? null,
-        horizontalBreakIn: msg.horizontalBreakIn ?? null,
-        sswBreakVIn:       msg.sswBreakVIn ?? null,
-        sswBreakHIn:       msg.sswBreakHIn ?? null,
-        releaseHeightFt:   msg.releaseHeightFt ?? null,
-        releaseSideFt:     msg.releaseSideFt ?? null,
-        extensionFt:       msg.extensionFt ?? null,
-        plateLocation:     msg.plateLocation ?? null,
-        trajectory: (msg.trajectory ?? []).map((p) => ({
-          x: p.x, y: p.y, z: p.z,
-          timestamp: p.t * 1_000_000,
-        })),
-      };
-      const session: SwingSession = {
-        id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        ball,
-        hasReplayFrames: false,
-      };
-      const isRecord = ball.exitVelocity > s.allTimeBestEv;
+      // Dedupe: history replay and live broadcast can carry the same swing
+      // (the backend store assigns the id both agree on).
+      if (msg.id && s.swings.some((sw) => sw.id === msg.id)) return {};
+      const session = measurementToSession(msg);
+      const isRecord = session.ball.exitVelocity > s.allTimeBestEv;
       if (isRecord) {
-        localStorage.setItem(STORAGE_KEY_ATR, String(ball.exitVelocity));
+        localStorage.setItem(STORAGE_KEY_ATR, String(session.ball.exitVelocity));
       }
       return {
         swings: [session, ...s.swings],
@@ -143,11 +108,19 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set) => ({
           state: 'armed',
         },
         ...(isRecord && {
-          allTimeBestEv:    ball.exitVelocity,
+          allTimeBestEv:    session.ball.exitVelocity,
           newRecordSwingId: session.id,
         }),
       };
     }),
+
+  // Backend history replay: raw measurement-shaped records → sessions.
+  mergeStoredSwings: (stored) =>
+    set((s) => mergeSessionsInto(s, stored.map((m) => measurementToSession(m)))),
+
+  // IndexedDB hydration: already-mapped SwingSession objects.
+  mergeSessions: (sessions) =>
+    set((s) => mergeSessionsInto(s, sessions)),
 
   setWsHost: (host) => {
     localStorage.setItem(STORAGE_KEY_HOST, host);
@@ -160,3 +133,76 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set) => ({
   updatePiHealth:   (health) => set({ piHealth: health }),
   clearNewRecord:   ()       => set({ newRecordSwingId: null }),
 });
+
+/** Merge restored swings (backend history replay or IndexedDB hydration)
+ *  without live-swing side effects: no arming, no record flash — but the
+ *  all-time best still absorbs archived EVs so a cleared localStorage
+ *  can't shrink the record. Dedupes by id against current swings. */
+function mergeSessionsInto(
+  s: Pick<SessionSlice, 'swings' | 'allTimeBestEv' | 'activeSwingId'>,
+  incoming: SwingSession[],
+): Partial<SessionSlice> {
+  const known = new Set(s.swings.map((sw) => sw.id));
+  const restored = incoming.filter((sw) => !known.has(sw.id));
+  if (restored.length === 0) return {};
+  const swings = [...s.swings, ...restored]
+    .sort((a, b) => b.timestamp - a.timestamp);
+  const bestEv = Math.max(s.allTimeBestEv, ...restored.map((r) => r.ball.exitVelocity));
+  if (bestEv > s.allTimeBestEv) {
+    localStorage.setItem(STORAGE_KEY_ATR, String(bestEv));
+  }
+  return {
+    swings,
+    allTimeBestEv: bestEv,
+    activeSwingId: s.activeSwingId ?? swings[0]?.id ?? null,
+  };
+}
+
+/** Build a SwingSession from a measurement/stored-swing payload. Stored
+ *  records keep their archive id + timestamp so dedupe works across
+ *  live broadcasts, history replays, and IndexedDB hydration. */
+export function measurementToSession(
+  msg: Omit<MeasurementMsg, 'type'> & { type?: string },
+): SwingSession {
+  const ball: BallMeasurement = {
+    exitVelocity: msg.exitVelocity,
+    launchAngle: msg.launchAngle,
+    sprayAngle: msg.sprayAngle,
+    seam: msg.spin
+      ? {
+          spinRate: msg.spin.rpm,
+          spinAxis: msg.spin.axis,
+          spinEfficiency: msg.spin.efficiency,
+          seamFrames: [],
+          confidence: msg.spin.confidence,
+        }
+      : null,
+    contactFrameIndex: 0,
+    processingLatencyMs: msg.latencyMs,
+    detectRate: msg.detectRate,
+    evSource: msg.evSource,
+    radarVelocityMph: msg.radarVelocityMps != null
+      ? Math.round(msg.radarVelocityMps * 2.23694 * 10) / 10
+      : null,
+    pitchVelocityMph: msg.pitchVelocity ?? null,
+    carryDistanceM:   msg.carryDistanceM ?? null,
+    verticalBreakIn:   msg.verticalBreakIn ?? null,
+    horizontalBreakIn: msg.horizontalBreakIn ?? null,
+    sswBreakVIn:       msg.sswBreakVIn ?? null,
+    sswBreakHIn:       msg.sswBreakHIn ?? null,
+    releaseHeightFt:   msg.releaseHeightFt ?? null,
+    releaseSideFt:     msg.releaseSideFt ?? null,
+    extensionFt:       msg.extensionFt ?? null,
+    plateLocation:     msg.plateLocation ?? null,
+    trajectory: (msg.trajectory ?? []).map((p) => ({
+      x: p.x, y: p.y, z: p.z,
+      timestamp: p.t * 1_000_000,
+    })),
+  };
+  return {
+    id: msg.id ?? crypto.randomUUID(),
+    timestamp: msg.timestamp ?? Date.now(),
+    ball,
+    hasReplayFrames: false,
+  };
+}

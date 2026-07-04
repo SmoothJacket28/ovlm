@@ -45,9 +45,11 @@ class PipelineServer:
         self._calib_start_cb  = None   # (height_mm, dist_mm)
         self._calib_capture_cb = None
         self._calib_stop_cb   = None
+        self._history_cb      = None   # (limit) -> list of stored swing records
 
     def set_callbacks(self, arm=None, disarm=None, reset=None, set_threshold=None, set_mode=None,
-                      calib_start=None, calib_capture=None, calib_stop=None) -> None:
+                      calib_start=None, calib_capture=None, calib_stop=None,
+                      get_history=None) -> None:
         self._arm_cb           = arm
         self._disarm_cb        = disarm
         self._reset_cb         = reset
@@ -56,6 +58,7 @@ class PipelineServer:
         self._calib_start_cb   = calib_start
         self._calib_capture_cb = calib_capture
         self._calib_stop_cb    = calib_stop
+        self._history_cb       = get_history
 
     async def _handler(self, ws: "WebSocketServerProtocol") -> None:
         self._clients.add(ws)
@@ -90,6 +93,16 @@ class PipelineServer:
                     self._calib_capture_cb()
                 elif t == "calib_stop" and self._calib_stop_cb:
                     self._calib_stop_cb()
+                elif t == "get_history" and self._history_cb:
+                    # Replay the durable archive to THIS client only — new
+                    # dashboards restore their session after a refresh or a
+                    # monitor restart.
+                    try:
+                        limit = int(msg.get("limit", 100))
+                    except (TypeError, ValueError):
+                        limit = 100
+                    swings = self._history_cb(limit)
+                    await ws.send(json.dumps({"type": "history", "swings": swings}))
 
         except Exception:
             pass
