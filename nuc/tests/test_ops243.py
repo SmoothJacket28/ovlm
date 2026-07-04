@@ -186,6 +186,61 @@ class TestEventPeak(unittest.TestCase):
         self.assertAlmostEqual(r.latest_range_m(), 8.5)
 
 
+class TestTriggers(unittest.TestCase):
+    def test_outbound_fires_hit_trigger(self):
+        r = make_reader()
+        fired = []
+        r.set_trigger_callback(lambda mph, rng: fired.append((mph, rng)))
+        r._parse('44.70')
+        self.assertEqual(len(fired), 1)
+        self.assertAlmostEqual(fired[0][0], 44.70 * MPS_TO_MPH, places=2)
+
+    def test_inbound_fires_pitch_trigger_not_hit(self):
+        r = make_reader()
+        hits, pitches = [], []
+        r.set_trigger_callback(lambda mph, rng: hits.append(mph))
+        r.set_pitch_trigger_callback(lambda mph, rng: pitches.append(mph))
+        r._parse('-40.0')
+        self.assertEqual(hits, [])
+        self.assertEqual(len(pitches), 1)
+
+    def test_below_threshold_never_triggers(self):
+        r = make_reader()
+        fired = []
+        r.set_trigger_callback(lambda mph, rng: fired.append(mph))
+        r.set_pitch_trigger_callback(lambda mph, rng: fired.append(mph))
+        r._parse('10.0')
+        r._parse('-10.0')
+        self.assertEqual(fired, [])
+
+    def test_debounce_suppresses_burst(self):
+        # A hit produces a burst of outbound readings — the trigger must
+        # fire once per event, not once per reading.
+        r = make_reader(debounce_s=0.5)
+        fired = []
+        r.set_trigger_callback(lambda mph, rng: fired.append(mph))
+        for s_ in ('44.8', '44.3', '43.1', '41.9'):
+            r._parse(s_)
+        self.assertEqual(len(fired), 1)
+
+    def test_debounce_expiry_allows_next_event(self):
+        r = make_reader(debounce_s=0.03)
+        fired = []
+        r.set_trigger_callback(lambda mph, rng: fired.append(mph))
+        r._parse('44.8')
+        time.sleep(0.05)
+        r._parse('42.0')
+        self.assertEqual(len(fired), 2)
+
+    def test_magnitude_gated_reading_does_not_trigger(self):
+        # A weak ghost return must not fire a capture.
+        r = make_reader(min_magnitude=50.0)
+        fired = []
+        r.set_trigger_callback(lambda mph, rng: fired.append(mph))
+        r._parse('{"speed":38.0,"direction":"outbound","magnitude":5.0}')
+        self.assertEqual(fired, [])
+
+
 class TestCosineCorrection(unittest.TestCase):
     def test_head_on_is_unity(self):
         # Ball flying straight along the line of sight → no correction.

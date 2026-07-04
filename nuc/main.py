@@ -91,7 +91,7 @@ def main() -> None:
     armed = False
     current_mode = "hitting"   # 'pitching' | 'hitting' | 'live' — set by the browser via set_mode
 
-    def mic_active() -> bool:
+    def hit_trigger_active() -> bool:
         return current_mode in ("hitting", "live")
 
     def pitch_trigger_active() -> bool:
@@ -107,10 +107,10 @@ def main() -> None:
     def arm():
         nonlocal armed
         armed = True
-        if not args.no_audio and mic_active():
+        if not args.no_audio and hit_trigger_active():
             audio.arm()
         server.broadcast({"type": "status", "state": "armed",
-                          "audioArmed": not args.no_audio and mic_active()})
+                          "audioArmed": not args.no_audio and hit_trigger_active()})
         log.info("Armed (mode=%s)", current_mode)
 
     def disarm():
@@ -146,6 +146,22 @@ def main() -> None:
                 log.info("Radar trigger at %.1f mph", abs(pt.vel) * 2.23694)
                 buffer.trigger(time.monotonic())
         radar.set_trigger_callback(_radar_trigger)
+
+    # OPS243 hit trigger — PRIMARY trigger for Hitting/Live sessions.
+    # Fires on outbound (batted-ball) detections, which are physically
+    # selective: only a batted ball moves away above the EV threshold, so
+    # it has none of the mic's failure modes (cage noise false-fires,
+    # missed triggers on quiet/soft contact, gain sensitivity). The mic
+    # stays wired as a redundant backup — either trigger flushes the same
+    # frame window, and a re-trigger merely re-centers it. The radar
+    # report lags contact by ~0.1 s, so the trigger time is backdated to
+    # keep the ±window centered on the hit.
+    if ops243 is not None:
+        def _ops243_hit_trigger(ev_mph: float, _range_m: float | None) -> None:
+            if armed and hit_trigger_active():
+                log.info("Radar hit trigger at %.1f mph", ev_mph)
+                buffer.trigger(time.monotonic() - config.OPS243_TRIGGER_LATENCY_S)
+        ops243.set_trigger_callback(_ops243_hit_trigger)
 
     # OPS243 pitch trigger: fires on inbound (pitch-release) detections, the
     # same buffer.trigger() path as audio — used for Pitching/Live sessions,

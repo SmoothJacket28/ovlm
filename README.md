@@ -65,7 +65,8 @@ Dashboard steps are identical to macOS.
 - 2× global-shutter USB cameras (OV9281-class, e.g. QILOVE 800P) for stereo
   tracking at 640×480 @ 210 fps
 - Optional third camera for seam-based spin measurement
-- Optional microphone for the bat-crack trigger
+- Optional microphone — backup bat-crack trigger (the OPS243 radar's
+  outbound detection is the primary hit trigger)
 - See `nuc/config.py` for all tunables and `nuc/CALIBRATION.md` for the
   calibration guide
 

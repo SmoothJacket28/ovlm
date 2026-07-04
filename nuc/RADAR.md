@@ -23,6 +23,13 @@ right and enter the mount position.
    clutter) are rejected below `OPS243_MIN_MAGNITUDE`.
 5. **On-device filtering.** Sub-30 mph objects (people, bat waggle, fans)
    are dropped by the sensor itself (`R>` filter) before they reach OVLM.
+6. **Primary capture trigger.** Outbound detections trigger hit capture and
+   inbound detections trigger pitch capture — both physically selective, so
+   cage noise can't false-fire them and quiet contact can't be missed. The
+   mic bat-crack stays wired as a redundant backup; either source flushes
+   the same frame window, and the radar's ~0.1 s report latency is
+   backdated (`OPS243_TRIGGER_LATENCY_S`) so the window stays centered
+   on contact.
 
 ## Mounting for accuracy
 

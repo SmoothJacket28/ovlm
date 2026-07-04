@@ -7,8 +7,8 @@ import type { SessionMode, LiveDelivery, LiveScenario } from '@/state/sessionMod
 
 const MODE_META: Record<SessionMode, { label: string; icon: string; hint: string }> = {
   pitching: { label: 'PITCHING', icon: '🎯', hint: 'Trigger: radar release detect. Tracks pitch velocity, spin, and movement.' },
-  hitting:  { label: 'HITTING',  icon: '🏏', hint: 'Trigger: mic bat-crack. Tracks exit velocity, launch angle, and spray.' },
-  live:     { label: 'LIVE',     icon: '⚡', hint: 'Trigger: mic + radar. Tracks both pitch and batted-ball metrics.' },
+  hitting:  { label: 'HITTING',  icon: '🏏', hint: 'Trigger: radar hit detect (mic backup). Tracks exit velocity, launch angle, and spray.' },
+  live:     { label: 'LIVE',     icon: '⚡', hint: 'Trigger: radar pitch + hit detect (mic backup). Tracks both pitch and batted-ball metrics.' },
 };
 
 export function DualVideoPanel(): React.ReactElement {

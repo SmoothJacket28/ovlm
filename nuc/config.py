@@ -210,6 +210,12 @@ SWING_TRAJECTORY_DECIMALS = 3
 # How many stored swings the dashboard receives on connect (get_history).
 SWING_HISTORY_LIMIT = 100
 
+# Radar hit-trigger latency compensation: the OPS243's outbound report
+# arrives ~0.1 s after contact (FFT buffer at 20 ksps ≈ 51 ms + serial +
+# threshold crossing). The trigger time is backdated by this much so the
+# ±HALF_WINDOW_S frame window stays centered on the actual hit.
+OPS243_TRIGGER_LATENCY_S = 0.08
+
 # ── Home-plate AI calibration ─────────────────────────────────────────────────
 # Calibrate the stereo rig from a regulation home plate in view — no ChArUco
 # board. A keypoint model (plate_detector.py) finds the plate's 5 corners in
