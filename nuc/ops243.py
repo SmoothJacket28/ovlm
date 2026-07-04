@@ -337,10 +337,13 @@ class OPS243Reader:
             if b is None:
                 speed_mps = a
             else:
-                # "magnitude,speed" (OM mode): magnitude is unsigned and
-                # usually large; "speed,range" (legacy FMCW pairing) has a
-                # signed first field. Disambiguate on the sign / size.
-                if a >= 0 and abs(b) <= 70.0 and a > abs(b):
+                # Two-field CSV: with OM enabled the device emits
+                # "magnitude,speed"; a legacy "speed,range" pairing is only
+                # assumed when the first field is negative (a signed speed
+                # can never be a magnitude). Positive-first lines parse as
+                # magnitude,speed — the conservative reading, since a
+                # misread ghost EV is worse than a dropped range value.
+                if a >= 0:
                     magnitude, speed_mps = a, b
                 else:
                     speed_mps, range_m = a, abs(b)

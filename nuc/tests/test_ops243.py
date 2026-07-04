@@ -10,20 +10,17 @@ No hardware, pyserial, or OpenCV required.
 import math
 import sys
 import time
-import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # config.py imports cv2 for capture constants; stub it so the radar module
-# is testable without OpenCV installed.
+# is testable without OpenCV installed. MagicMock keeps the stub permissive
+# enough for any test module that runs in the same process.
 if 'cv2' not in sys.modules:
-    _cv2 = types.ModuleType('cv2')
-    for name in ('CAP_MSMF', 'CAP_AVFOUNDATION', 'CAP_V4L2', 'CAP_ANY'):
-        setattr(_cv2, name, 0)
-    _cv2.VideoWriter_fourcc = lambda *a: 0
-    sys.modules['cv2'] = _cv2
+    from unittest import mock
+    sys.modules['cv2'] = mock.MagicMock(name='cv2-stub')
 
 import ops243
 from ops243 import OPS243Reader, launch_direction, los_cosine
