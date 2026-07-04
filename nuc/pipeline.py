@@ -19,6 +19,7 @@ import time
 from typing import List, Optional
 
 import config
+import ops243 as ops243_mod
 import pitch_physics
 from capture import FramePair
 from seam_tracker import SeamTracker, SpinMeasurement
@@ -142,35 +143,66 @@ class TrackingPipeline:
         carry_distance_m:   Optional[float] = None
         ev_source = 'camera'
 
-        # OPS243-C-FC-RP (primary radar — pitch speed, EV, FMCW range)
-        if self._ops243 is not None:
+        # OPS243-C-FC-RP (primary radar — pitch speed, EV, FMCW range).
+        # Readings are peak-of-event (release/contact speed convention) and
+        # get cosine-corrected: Doppler measures only the radial component
+        # v·cos(θ), so we divide by cos(θ) computed from the camera-fitted
+        # geometry to recover true speed.
+        ops_pitch_raw_mph: Optional[float] = None   # uncorrected, for the
+        if self._ops243 is not None:                # precise pitch-branch fix-up
             ops_ev_mph    = self._ops243.latest_ev_mph()
-            ops_pitch_mph = self._ops243.latest_pitch_mph()
+            ops_pitch_raw_mph = self._ops243.latest_pitch_mph()
             ops_range_m   = self._ops243.latest_range_m()
             self._ops243.clear()
 
-            if ops_pitch_mph is not None:
-                pitch_velocity_mph = round(ops_pitch_mph, 1)
+            if ops_pitch_raw_mph is not None:
+                # Static geometry correction — refined below from the fitted
+                # pitch trajectory when this event IS a pitch.
+                pitch_velocity_mph = round(
+                    ops_pitch_raw_mph / config.OPS243_PITCH_COS_DEFAULT, 1)
 
             if ops_range_m is not None:
                 carry_distance_m = round(ops_range_m, 2)
 
             if ops_ev_mph is not None:
+                # Cosine correction from the batted ball's launch direction:
+                # evaluate the line-of-sight angle a few meters into the
+                # flight, where the peak radar reading occurs.
+                d = ops243_mod.launch_direction(
+                    metrics.launch_angle_deg, metrics.spray_angle_deg)
+                p0 = metrics.trajectory[0] if metrics.trajectory else None
+                start = (p0.x, p0.y, p0.z) if p0 else (0.0, 1.0, 0.0)
+                s = config.OPS243_EV_EVAL_DIST_M
+                ball_pos = (start[0] + d[0] * s, start[1] + d[1] * s, start[2] + d[2] * s)
+                cos_ev = ops243_mod.los_cosine(
+                    d, ball_pos, config.OPS243_POS_M, floor=config.OPS243_COS_FLOOR)
+                if cos_ev is not None:
+                    corrected_mph = ops_ev_mph / cos_ev
+                    log.info("OPS243 EV cosine correction: %.1f → %.1f mph (cosθ=%.3f)",
+                             ops_ev_mph, corrected_mph, cos_ev)
+                    ops_ev_mph = corrected_mph
+                else:
+                    log.info("OPS243 EV geometry too oblique for cosine "
+                             "correction — using radial reading as-is")
+
                 cam_mph = metrics.exit_velocity_mph
                 agree   = abs(ops_ev_mph - cam_mph) / max(cam_mph, 1) <= config.OPS243_AGREE_FRACTION
                 radar_velocity_mps = ops_ev_mph / MPS_TO_MPH
-                if agree:
+                if agree and cos_ev is not None:
                     metrics   = dataclasses.replace(metrics, exit_velocity_mph=round(ops_ev_mph, 1))
                     ev_source = 'radar'
                     log.info("OPS243 EV %.1f mph (camera=%.1f mph, Δ=%.1f%%)",
                              ops_ev_mph, cam_mph,
                              100 * abs(ops_ev_mph - cam_mph) / max(cam_mph, 1))
-                else:
+                elif not agree:
                     log.info("OPS243 EV %.1f mph disagrees with camera %.1f mph "
                              "(Δ=%.1f%% > %.0f%% tolerance) — keeping camera",
                              ops_ev_mph, cam_mph,
                              100 * abs(ops_ev_mph - cam_mph) / max(cam_mph, 1),
                              config.OPS243_AGREE_FRACTION * 100)
+                else:
+                    log.info("OPS243 EV %.1f mph uncorrectable geometry — "
+                             "keeping camera %.1f mph", ops_ev_mph, cam_mph)
 
         # TI IWR6843ISK (optional secondary — higher spatial resolution)
         if self._radar is not None and ev_source == 'camera':
@@ -220,6 +252,23 @@ class TrackingPipeline:
             raw_fit = self._fitter.fit_raw(points)
             if raw_fit is not None:
                 pitch_metrics = pitch_physics.compute_pitch_metrics(raw_fit, spin)
+
+                # Refine the radar pitch speed with the PRECISE cosine
+                # correction now that the pitch trajectory is fitted: the
+                # line of sight runs from the antenna to the fitted release
+                # point (the peak reading occurs near release, where the
+                # ball is fastest). This replaces the static factor applied
+                # earlier.
+                if ops_pitch_raw_mph is not None:
+                    cos_pitch = ops243_mod.los_cosine(
+                        (raw_fit.vx0, raw_fit.vy0, raw_fit.vz0),
+                        (raw_fit.x0,  raw_fit.y0,  raw_fit.z0),
+                        config.OPS243_POS_M, floor=config.OPS243_COS_FLOOR)
+                    if cos_pitch is not None:
+                        corrected = round(ops_pitch_raw_mph / cos_pitch, 1)
+                        log.info("OPS243 pitch cosine correction: %.1f → %.1f mph (cosθ=%.3f)",
+                                 ops_pitch_raw_mph, corrected, cos_pitch)
+                        pitch_velocity_mph = corrected
 
                 # Prefer OPS243's Doppler reading when it agrees with the camera
                 # (same agree/replace pattern as the EV cross-check above); fall

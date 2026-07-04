@@ -127,11 +127,57 @@ RUBBER_DISTANCE_M  = 18.44
 # Linux: usually /dev/ttyACM0 (check: ls /dev/ttyACM*)
 # Windows: check Device Manager → Ports (COM & LPT)
 OPS243_ENABLED       = True
-OPS243_PORT          = '/dev/ttyACM0'
-OPS243_BAUD          = 9600
+OPS243_PORT          = '/dev/ttyACM0'   # macOS: '/dev/cu.usbmodem…'  Windows: 'COM5'
+OPS243_BAUD          = 9600   # cosmetic — the OPS243 is USB CDC-ACM (USB speed)
 OPS243_MIN_PITCH_MPS = 13.4   # ~30 mph inbound — slower = ignore (noise / wind)
 OPS243_MIN_EV_MPS    = 17.9   # ~40 mph outbound — slower = ignore (bunts / foul tips)
 OPS243_AGREE_FRACTION = 0.15  # EV agreement threshold vs. camera (15%)
+
+# Sampling rate command (AN-010): 'S2' = 20 ksps → 62.2 m/s (139.1 mph) max.
+# Do NOT use the factory default 10 ksps ('SX') — it tops out at 31.1 m/s
+# (69.5 mph), below real pitch and exit velocities. ('SV' = 5 ksps is for
+# slow-object uses only.) Lower rates give finer speed resolution, so 20 ksps
+# is the sweet spot: full baseball speed range at ~0.27 mph/bin resolution.
+OPS243_SAMPLE_RATE_CMD = 'S2'
+
+# Signal-magnitude gate: readings weaker than this are discarded (multipath
+# ghosts, edge-of-beam clutter). 0 disables. Typical solid ball returns in
+# the hitting zone are hundreds+; raise this if you see phantom readings,
+# lower it toward 0 if real swings go missing. Watch magnitudes with
+# DEBUG logging: python main.py -v
+OPS243_MIN_MAGNITUDE = 10.0
+
+# Event grouping: readings within this window of the newest reading form one
+# pitch/hit event; the PEAK of the event is the reported speed (a ball
+# decelerates from drag while the radar keeps reporting, so the last reading
+# systematically underreads — peak-of-event matches the release-speed /
+# contact-speed convention TrackMan uses).
+OPS243_EVENT_WINDOW_S = 1.2
+# Readings older than this at fusion time are stale — ignore them.
+OPS243_FRESH_S = 2.5
+
+# ── Radar mount geometry (for cosine-error correction) ───────────────────────
+# A Doppler radar measures the RADIAL speed component: v_radial = v·cos(θ),
+# where θ is the angle between the ball's velocity and the radar line of
+# sight. The pipeline divides radar speeds by cos(θ) computed from the
+# camera-fitted trajectory, recovering true speed.
+# Antenna position in the plate frame: x lateral (+ = 1B side), y up,
+# z toward the pitcher — all meters. Default: centered, 0.3 m up, 1 m
+# behind home plate. MEASURE AND SET THIS for your install; a wrong
+# position degrades the correction.
+OPS243_POS_M = (0.0, 0.3, -1.0)
+# Distance along the batted-ball flight at which the peak radar reading is
+# assumed to occur (used to evaluate the line-of-sight angle for EV).
+OPS243_EV_EVAL_DIST_M = 3.0
+# Below this cos(θ) the geometry is too oblique to correct reliably (the
+# division would amplify noise) — the radial reading is used uncorrected
+# and the camera EV wins the fusion.
+OPS243_COS_FLOOR = 0.5
+# Static pitch-speed correction when no camera fit of the pitch exists
+# (hitting sessions measure the batted ball, not the incoming pitch).
+# cos(θ) for a typical mound-to-plate geometry with the default mount is
+# ~0.995 (release ~1.8 m up at 16.5 m vs. antenna 0.3 m up: θ ≈ 5°).
+OPS243_PITCH_COS_DEFAULT = 0.995
 
 # ── Radar (TI IWR6843ISK) ─────────────────────────────────────────────────────
 # On Windows the board registers as two COM ports after the USB driver installs.
